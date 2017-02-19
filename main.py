@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import cv2
 import logging
 import cvxopt
+from sklearn import svm
 
 ################################################################################
 
@@ -18,6 +19,9 @@ def load_data():
             - Xte : testing dataset
             - Ytr : training labels
     """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
     # define the different path
     Xtr_path = os.path.join(os.getcwd(), "Data", "Xtr.csv")
     Xte_path = os.path.join(os.getcwd(), "Data", "Xte.csv")
@@ -26,14 +30,15 @@ def load_data():
     # load the data
     Xtr = np.genfromtxt(Xtr_path, delimiter=',')
     # Xte = np.genfromtxt(Xte_path, delimiter=',')
-    # Ytr = np.loadtxt(Ytr_path, delimiter=',', skiprows=1)
+    Ytr = np.loadtxt(Ytr_path, delimiter=',', skiprows=1)
 
     # trim the useless data
     Xtr = Xtr[:,0:3072]
     # Xte = Xte[:,0:3072]
-    # Ytr = Ytr[:,1].astype('uint8')
+    Ytr = Ytr[:,1].astype('uint8')
+    logging.info("%d images loaded from file"%Xtr.shape[0])
 
-    return Xtr
+    return Xtr, Ytr
 
 ################################################################################
 
@@ -256,6 +261,7 @@ def patch_hist(im, dic, patch_width):
         Arguments:
             - im : raw 2D image
             - dic : dictionnary of all words
+            - patch_width : width of the patch
 
         Returns:
             - hist : patch histogram
@@ -277,28 +283,28 @@ def patch_hist(im, dic, patch_width):
 
 ################################################################################
 
-def patch_Graam(X, dic, patch_width):
+def patch_Gram(X, dic, patch_width):
     """
-        Generate the Graam matrix corresponding to the patch feature.
+        Generate the Gram matrix corresponding to the patch feature.
 
         Arguments:
             - X : dataset
             - dic : dictionnary of all words
 
         Returns:
-            - K : Graam matrix
+            - K : Gram matrix
     """
     # initialize logger
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
     # define path
-    graam_path = "graam_patch.csv"
+    gram_path = "gram_patch.csv"
 
     # check if it already exists
-    if os.path.isfile(graam_path):
+    if os.path.isfile(gram_path):
         # load the matrix
-        K = np.loadtxt(graam_path, delimiter=',')
-        logging.info("Graam matrix loaded from file")
+        K = np.loadtxt(gram_path, delimiter=',')
+        logging.info("Gram matrix loaded from file")
     else:
         # initialize variables
         K = np.zeros((X.shape[0], X.shape[0]))
@@ -310,7 +316,7 @@ def patch_Graam(X, dic, patch_width):
             hist_i = patch_hist(im_i, dic, patch_width)
 
             # display progress
-            logging.info("Graam: iter %d/%d"%(i, X.shape[0]))
+            logging.info("Gram: iter %d/%d"%(i, X.shape[0]))
 
             for j in range(i, X.shape[0]):
                 # retrieve the second histogram
@@ -322,41 +328,41 @@ def patch_Graam(X, dic, patch_width):
                 K[j,i] = hist_i.dot(hist_j)
 
         # save the matrix
-        np.savetxt(graam_path, K, delimiter=',')
-        logging.info("Graam matrix saved in file %s"%graam_path)
+        np.savetxt(gram_path, K, delimiter=',')
+        logging.info("Gram matrix saved in file %s"%gram_path)
 
     return K
 
 ################################################################################
 
-def SVM_test(lambda_reg):
+def SVM_kernel(K, Y, lambda_reg):
     """
-        Quadratic problem for the cvxopt solver:
-            min         1/2 x^T P x + q^T x
-            s.t.        Gx <= h
-                        Ax = b
+        Solve the quadratic problem with dual formulation using the kernel Gram
+        matrix to evaluate the function f(x) = \sum_i alpha_i K(x_i,x)
 
         Quadratic problem for SVM-soft margin:
             min         1/2 x^T K x - y^T x
             s.t.        - y_i x_i <= 0
                         y_i x_i <= 1/(2 lambda n)
 
+        Quadratic problem for the cvxopt solver:
+            min         1/2 x^T P x + q^T x
+            s.t.        Gx <= h
+                        Ax = b
+
         Arguments:
+            - K : kernel Gram matrix
+            - Y : data labels
             - lambda_reg : regularisation parameter for the SVM soft margin
 
         Returns:
-            - bla : bla
+            - alpha : lagrangian multipliers
     """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
     # number of samples
-    n = 5
-
-    # randomly generate data
-    a = np.random.rand(n)
-    K = np.outer(a,a)
-    Y = 2 * np.random.randint(1, size=n) - 1
-    w,v = np.linalg.eig(K)
-    print(v)
+    n = K.shape[0]
 
     # QP objective function parameters
     P = K
@@ -371,24 +377,80 @@ def SVM_test(lambda_reg):
     h[n:2*n] = 1./ (2 * lambda_reg * n)
 
     # convert all matrix to cvxopt matrix
-    P = cvxopt.matrix(P.astype(np.double))
-    q = cvxopt.matrix(q.astype(np.double))
-    G = cvxopt.matrix(G.astype(np.double))
-    h = cvxopt.matrix(h.astype(np.double))
+    P_qp = cvxopt.matrix(P.astype(np.double))
+    q_qp = cvxopt.matrix(q.astype(np.double))
+    G_qp = cvxopt.matrix(G.astype(np.double))
+    h_qp = cvxopt.matrix(h.astype(np.double))
 
     # solve
-    solution = cvxopt.solvers.qp(P, q)
-    # solution = cvxopt.solvers.qp(P, q, G, h, A, b)
+    logging.info("Solving SVM dual formulation")
+    solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp)
+    # solution = cvxopt.solvers.qp(P_qp, q_qp)
 
+    # retrieve lagrangian multipliers
+    alpha = np.array(solution['x']).flatten()
+    logging.info("%d supporting vectors found"%np.sum(np.abs(alpha)>1e-6))
+
+    # print(G.dot(alpha))
+    # print(h)
+    # print(X)
+    # print(alpha)
+    # ip = np.where(X==X[X>0].min())[0][0]
+    # im = np.where(X==X[X<0].max())[0][0]
+    # print(ip)
+    # print(im)
+    # x = np.copy(alpha)
+    # print(x[ip])
+    # print(x[im])
+    # print(0.5*x.T.dot(K).dot(x) - Y.T.dot(x))
+
+
+    C = 20
+    clf = svm.SVC(kernel='precomputed', C=C)
+    clf.fit(K, Y)
+    print(clf.support_)
+    print(clf.dual_coef_)
+    clf2 = svm.SVC(kernel='precomputed', C=C*10)
+    clf2.fit(K, Y)
+    print(clf2.support_)
+    print(clf2.dual_coef_)
+
+    return alpha
+
+################################################################################
+
+def predictor_SVM(alpha, Xtr, dic, patch_width):
+    """
+        Compute the SVM predictor from the lagrangian multipliers and the
+        corresponding histograms.
+
+        Arguments:
+            - alpha : lagrangian multipliers
+            - Xtr : training dataset
+            - dic : dictionnary of all words
+            - patch_width : width of the patch
+
+        Returns:
+            - predictor : SVM predictor
+    """
+    # intialize variables
+    predictor = np.zeros(dic.shape[0])
+
+    # loop through all vectors
+    for i in range(0, Xtr.shape[0]):
+        # retrieve the first histogram
+        im = build_image(Xtr[i,:])
+        hist = patch_hist(im, dic, patch_width)
+        predictor += hist * alpha[i]
+
+    print(predictor)
+    return predictor
 
 ################################################################################
 
 if __name__ == "__main__":
-    # load the data
-    # Xtr = load_data()       # testing dataset
-
-    # plt.imshow(raw2gray(im), cmap=plt.get_cmap('gray'))
-    # plt.show()
+    # # load the data
+    # Xtr, Ytr = load_data()       # testing dataset
 
     # # initialize variables
     # patch_width = 4
@@ -397,12 +459,36 @@ if __name__ == "__main__":
     # # build the dictionnary
     # dic = patch_dictionnary(Xtr, n_voc, patch_width)
 
-    # # generate the Graam matrix
-    # K = patch_Graam(Xtr, dic, patch_width)
+    # # generate the Gram matrix
+    # K = patch_Gram(Xtr, dic, patch_width)
+
+    n = 5
+    X = 2*np.random.rand(n)-1
+    print(X)
+    Y = np.copy(X)
+    Y[Y>0] = 1
+    Y[Y<0] = -1
+    i = np.where(X==X.min())
+    Y[i] = - Y[i]
+    K = np.outer(X, X)
 
     # train the SVM
-    lambda_reg = 1
-    SVM_test(lambda_reg)
+    lambda_reg = 0.0000001
+    alpha = SVM_kernel(K, Y, lambda_reg)
+    # print(alpha)
+    # print(np.where(np.abs(alpha)>1e-6))
+    # print(Y[np.where(np.abs(alpha)>1e-6)])
+
+    # C = 1./(2 * n * lambda_reg)
+    # clf = svm.SVC(kernel='precomputed', C=C)
+    # clf.fit(K, Y)
+    # # pred = clf.predict(K)
+    # print(clf.support_)
+    # print(Y[clf.support_])
+    # print(clf.dual_coef_)
+
+    # compute the predictor
+    # predictor = predictor_SVM(alpha, Xtr, dic, patch_width)
 
 
 
