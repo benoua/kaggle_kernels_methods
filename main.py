@@ -335,15 +335,10 @@ def patch_Gram(X, dic, patch_width):
 
 ################################################################################
 
-def SVM_kernel(K, Y, lambda_reg):
+def SVM_kernel(K, Y, C):
     """
         Solve the quadratic problem with dual formulation using the kernel Gram
-        matrix to evaluate the function f(x) = \sum_i alpha_i K(x_i,x)
-
-        Quadratic problem for SVM-soft margin:
-            min         1/2 x^T K x - y^T x
-            s.t.        - y_i x_i <= 0
-                        y_i x_i <= 1/(2 lambda n)
+        matrix.
 
         Quadratic problem for the cvxopt solver:
             min         1/2 x^T P x + q^T x
@@ -353,7 +348,7 @@ def SVM_kernel(K, Y, lambda_reg):
         Arguments:
             - K : kernel Gram matrix
             - Y : data labels
-            - lambda_reg : regularisation parameter for the SVM soft margin
+            - C : regularisation parameter for the SVM soft margin
 
         Returns:
             - alpha : lagrangian multipliers
@@ -365,55 +360,35 @@ def SVM_kernel(K, Y, lambda_reg):
     n = K.shape[0]
 
     # QP objective function parameters
-    P = K
-    q = -Y
+    P = K * np.outer(Y, Y)
+    q = - np.ones(n)
 
-    # QP constraints parameters
+    # QP inequality constraint parameters
     G = np.zeros((2*n, n))
-    G[0:n,:] = np.diag(-Y)
-    G[n:2*n,:] = np.diag(Y)
-    h = np.zeros(2*n)
-    h[0:n] = 0
-    h[n:2*n] = 1./ (2 * lambda_reg * n)
+    G[0:n,:] = - np.eye(n)
+    G[n:2*n,:] = np.eye(n)
+    h = np.zeros((2*n,1))
+    h[0:n,0] = 0
+    h[n:2*n,0] = C
+
+    # QP equality constraint parameters
+    A = Y.reshape(1,n)
+    b = np.array([0])
 
     # convert all matrix to cvxopt matrix
     P_qp = cvxopt.matrix(P.astype(np.double))
     q_qp = cvxopt.matrix(q.astype(np.double))
     G_qp = cvxopt.matrix(G.astype(np.double))
     h_qp = cvxopt.matrix(h.astype(np.double))
+    A_qp = cvxopt.matrix(A.astype(np.double))
+    b_qp = cvxopt.matrix(b.astype(np.double))
 
     # solve
     logging.info("Solving SVM dual formulation")
-    solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp)
-    # solution = cvxopt.solvers.qp(P_qp, q_qp)
+    solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
 
     # retrieve lagrangian multipliers
     alpha = np.array(solution['x']).flatten()
-    logging.info("%d supporting vectors found"%np.sum(np.abs(alpha)>1e-6))
-
-    # print(G.dot(alpha))
-    # print(h)
-    # print(X)
-    # print(alpha)
-    # ip = np.where(X==X[X>0].min())[0][0]
-    # im = np.where(X==X[X<0].max())[0][0]
-    # print(ip)
-    # print(im)
-    # x = np.copy(alpha)
-    # print(x[ip])
-    # print(x[im])
-    # print(0.5*x.T.dot(K).dot(x) - Y.T.dot(x))
-
-
-    C = 20
-    clf = svm.SVC(kernel='precomputed', C=C)
-    clf.fit(K, Y)
-    print(clf.support_)
-    print(clf.dual_coef_)
-    clf2 = svm.SVC(kernel='precomputed', C=C*10)
-    clf2.fit(K, Y)
-    print(clf2.support_)
-    print(clf2.dual_coef_)
 
     return alpha
 
@@ -449,43 +424,38 @@ def predictor_SVM(alpha, Xtr, dic, patch_width):
 ################################################################################
 
 if __name__ == "__main__":
-    # # load the data
+    # load the data
     # Xtr, Ytr = load_data()       # testing dataset
 
-    # # initialize variables
+    # initialize variables
     # patch_width = 4
     # n_voc = 1000
 
-    # # build the dictionnary
+    # build the dictionnary
     # dic = patch_dictionnary(Xtr, n_voc, patch_width)
 
-    # # generate the Gram matrix
+    # generate the Gram matrix
     # K = patch_Gram(Xtr, dic, patch_width)
 
-    n = 5
-    X = 2*np.random.rand(n)-1
-    print(X)
-    Y = np.copy(X)
-    Y[Y>0] = 1
-    Y[Y<0] = -1
-    i = np.where(X==X.min())
-    Y[i] = - Y[i]
-    K = np.outer(X, X)
+    # simulate data
+    n = 10
+    X = np.random.rand(n)
+    Y = 2 * np.random.randint(2, size=n) - 1
+    K = np.outer(X,X)
 
     # train the SVM
-    lambda_reg = 0.0000001
-    alpha = SVM_kernel(K, Y, lambda_reg)
-    # print(alpha)
-    # print(np.where(np.abs(alpha)>1e-6))
-    # print(Y[np.where(np.abs(alpha)>1e-6)])
+    C = 1
+    clf = svm.SVC(kernel='precomputed', C=C)
+    clf.fit(K, Y)
+    print(clf.dual_coef_)
+    print(clf.support_)
 
-    # C = 1./(2 * n * lambda_reg)
-    # clf = svm.SVC(kernel='precomputed', C=C)
-    # clf.fit(K, Y)
-    # # pred = clf.predict(K)
-    # print(clf.support_)
-    # print(Y[clf.support_])
-    # print(clf.dual_coef_)
+
+    alpha = SVM_kernel(K, Y, C)
+    print(alpha)
+    print(np.where(np.abs(alpha)>1e-6))
+
+
 
     # compute the predictor
     # predictor = predictor_SVM(alpha, Xtr, dic, patch_width)
