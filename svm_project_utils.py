@@ -55,7 +55,7 @@ def datasets(name, n_points, sigma=None):
         n_points = n_points // 2
         if sigma is None:
             sigma = 1.5
-        x1 = sigma * np.random.randn(n_points, 2) + [2, 1]
+        x1 = sigma * np.random.randn(n_points, 2) + [-2, 2]
         x2 = sigma * np.random.randn(n_points, 2) + [-2, -2]
         X = np.r_[x1, x2]
         y = np.concatenate([np.ones(n_points), -np.ones(n_points)])
@@ -88,3 +88,52 @@ def datasets(name, n_points, sigma=None):
 def plot_dataset(X, y):
     plt.plot(X[y > 0, 0], X[y > 0, 1], 'rx')
     plt.plot(X[y < 0, 0], X[y < 0, 1], 'bx')
+    plt.show()
+
+
+
+def kernel(X1, X2):
+    """ 
+    Compute the Gram Matrix for any given vector
+
+    Arguments :
+    - X : entry data 
+
+    Returns : 
+    - Gram Matrix 
+    """
+    n1 = X1.shape[0]
+    n2 = X2.shape[0]
+    K = np.empty((n1, n2))
+    for i in range(n1):
+        for j in range(n2):
+            K[i, j] = np.dot(X1[i], X2[j])
+    return K
+
+def plot_classif(X, y, mu_support, idx_support, b, kernel=kernel):
+    # Calcul de la fonction de décision sur une grille
+    X1, X2 = np.mgrid[-8:8:0.1, -8:8:0.1]
+    na, nb = X1.shape
+    X_test = np.c_[np.reshape(X1, (na * nb, 1)),
+                   np.reshape(X2, (na * nb, 1))]
+
+    # Calcul des produits scalaires
+    X_support = X[idx_support]
+    G = kernel(X_test, X_support)
+    # Calcul de la fonction de décision
+    decision = G.dot(mu_support * y[idx_support]) + b
+
+    # Calcul du label prédit
+    y_pred = np.sign(decision)
+
+    # Affichage des lignes de niveau de la fonction de decision
+    plt.contourf(X1, X2, np.reshape(decision, (na, nb)), 20, cmap=plt.cm.gray)
+    cs = plt.contour(X1, X2, np.reshape(decision, (na,nb)), [-1, 0, 1], color='g', linewidth=2)
+    plt.clabel(cs, inline=1)
+    plt.plot(X[y == 1,0], X[y == 1, 1], 'or', linewidth=2)
+    plt.plot(X[y == -1,0], X[y == -1, 1], 'ob', linewidth=2)
+    plt.xlabel('x1')
+    plt.ylabel('x2')
+    plt.xlim([-8, 8])
+    plt.ylim([-8, 8])
+    plt.show()
