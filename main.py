@@ -429,19 +429,19 @@ class quadra_pb(object):
         '''compute the gradient of f'''
         return np.dot( self.H , x) - np.ones(self.n)
  
-    # def grad_i(self, i, x):
-    #     '''coordinate gradient'''
-    #     return (np.dot(H[i].T , x) -1 )
+    def grad_i(self, x, i):
+        '''coordinate gradient'''
+        return (np.dot(self.H[i].T , x) -1 )
     
     def lipschitz_constant(self):
         """Return the Lipschitz constant of the gradient"""
         L = linalg.norm( self.H )
         return L
     
-    # def lipschitz_constant_i(self):
-    #     """Return the Lipschitz constant for all coordinates"""
-    #     L = [linalg.norm( self.H[i] ) for i in range(self.n)]
-    #     return L
+    def lipschitz_constant_i(self):
+        """Return the Lipschitz constant for all coordinates"""
+        L = [linalg.norm( self.H[i] ) * self.C for i in range(self.n)]
+        return L
     
     def prox_g(self, x, s=1, t=1.):
         """Proximal operator for g at x : """
@@ -553,7 +553,22 @@ def rbf_kernel(X, gamma = None):
 			K[i, j] = np.exp(-gamma * np.linalg.norm(X[i] - X[j]))  
 	return K
 
+##########################################################
 
+def cd(x0, grad_i, prox_g, L, max_iter):
+	
+	n_features = L.shape[0]
+	max_iter = max_iter * n_features
+
+	x = x0.copy()
+	for k in range(max_iter + 1):
+		#opti of the i-th coordinate
+		i = k % n_features
+
+		x[i] -= 1/ L[i] * grad_i(x, i)
+		x[i] = prox_g(x[i])
+
+	return x
 
 ################################################################################
 
@@ -588,12 +603,17 @@ if __name__ == "__main__":
 
 
 	# Train SVM with intercept
-	max_iter = 2000
-	step = 1. / model.lipschitz_constant()
-	x_init = np.zeros(X.shape[0])
-	mu_fista = fista_svm(x_init, model.f_, model.grad, model.g_, model.prox_g,  
-		step = step, n_iter=max_iter, verbose=False , callback =None)
-	print(mu_fista)
+	max_iter = 20000
+	# step = 1. / model.lipschitz_constant()
+	x_init = np.random.randn(X.shape[0])
+	# mu_fista = fista_svm(x_init, model.f_, model.grad, model.g_, model.prox_g,  
+	# 	step = step, n_iter=max_iter, verbose=False , callback =None)
+	# print(mu_fista)
+	L = np.array(model.lipschitz_constant_i())
+	x_star = cd(x_init, model.grad_i, model.prox_g, L, max_iter)
+	print(x_star[np.abs(x_star) > 1e-5])
+	print(np.where(np.abs(x_star)>1e-5))
+
 
 	# train the SVM
 	C = 1
@@ -644,3 +664,5 @@ if __name__ == "__main__":
 
 
 
+
+	
