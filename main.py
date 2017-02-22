@@ -35,7 +35,7 @@ def load_data():
     # trim the useless data
     Xtr = Xtr[:,0:3072]
     # Xte = Xte[:,0:3072]
-    Ytr = Ytr[:,1].astype('uint8')
+    Ytr = Ytr[:,1].astype(np.double)
     logging.info("%d images loaded from file"%Xtr.shape[0])
 
     return Xtr, Ytr
@@ -431,6 +431,53 @@ def SVM_kernel(K, Y, C, hists):
 
 ################################################################################
 
+def SVM_ovo(K, Y, C, hists):
+    """
+        Implement the one versus one strategy for multiclass SVM.
+
+        Arguments:
+            - K : kernel Gram matrix
+            - Y : data labels
+            - C : regularisation parameter for the SVM soft margin
+            - hists : list of histograms of all images
+    """
+    # retrieve unique labels
+    Y_unique = np.unique(Y)
+    N = Y_unique.shape[0]
+
+    # go through all labels
+    predictors = np.zeros((N * (N - 1) / 2, hists.shape[1] + 1))
+    k = 0
+    for i in range(0, Y_unique.shape[0]-1):
+        for j in range(i+1, Y_unique.shape[0]):
+            # build the data mask
+            mask = (Y==Y_unique[i]) + (Y==Y_unique[j])
+
+            # select only the required data
+            K_ij = K[mask,:]
+            K_ij = K_ij[:,mask]
+            hists_ij = hists[mask,:]
+            Y_ij = Y[mask]
+            Y_ij[Y_ij==Y_unique[j]] = -1
+            Y_ij[Y_ij==Y_unique[i]] = 1
+
+            # compute the corresponding SVM
+            w, rho = SVM_kernel(K_ij, Y_ij, C, hists_ij)
+
+            # store the values
+            predictors[k,0:-1] = w.flatten()
+            predictors[k,-1] = rho
+
+            # update iterator
+            k = k + 1
+
+    print(predictors)
+    print(predictors.shape)
+
+    return
+
+################################################################################
+
 if __name__ == "__main__":
     # load the data
     Xtr, Ytr = load_data()
@@ -446,16 +493,9 @@ if __name__ == "__main__":
     # generate the Gram matrix
     K = patch_Gram(Xtr, dic, patch_width, hists)
 
-    # modify data
-    n = K.shape[0]
-    Y = np.copy(Ytr).astype(np.double)
-    Y[Y!=3] = -1
-    Y[Y==3] = 1
-
     # train our SVM
     C = 100
-    w, rho = SVM_kernel(K, Y, C, hists)
-    print(w)
+    SVM_ovo(K, Ytr, C, hists)
 
 
 
