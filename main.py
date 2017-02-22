@@ -246,7 +246,7 @@ def patch_dictionnary(X, n_voc, patch_width):
     else:
         # build the dictionnary
         words = patch_list(X, patch_width)          # compute the words list
-        dic = kmeans(words, n_voc, 1)               # compute the dictionnary
+        dic = kmeans(words, n_voc, 3)               # compute the dictionnary
         np.savetxt(dic_path, dic, delimiter=',')    # save the dictionnary
         logging.info("Dictionnary saved in file %s"%dic_path)
 
@@ -283,13 +283,60 @@ def patch_hist(im, dic, patch_width):
 
 ################################################################################
 
-def patch_Gram(X, dic, patch_width):
+def patch_hists(X, dic, patch_width):
+    """
+        Compute histograms for all images.
+
+        Arguments:
+            - X : dataset
+            - dic : dictionnary of all words
+            - patch_width : width of the patch
+
+        Returns:
+            - hists : list of histograms of all images
+    """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+    # define path
+    hists_path = "hists_patch.csv"
+
+    # check if it already exists
+    if os.path.isfile(hists_path):
+        # load the matrix
+        hists = np.loadtxt(hists_path, delimiter=',')
+        logging.info("Histogram list loaded from file")
+    else:
+        logging.info("Histograms 0%%")
+
+        # build all histograms
+        hists = np.zeros((X.shape[0], dic.shape[0]))
+        for i in range(0, X.shape[0]):
+            # retrieve the first histogram
+            im_i = build_image(X[i,:])
+            hists[i,:] = patch_hist(im_i, dic, patch_width)
+
+            # display progress
+            if (i + 1) % (X.shape[0] / 5) == 0:
+                p = (i + 1) / (X.shape[0] / 5) * 20
+                logging.info("Histograms %d%%"%p)
+
+        # save the list
+        np.savetxt(hists_path, hists, delimiter=',')
+        logging.info("Histogram list saved in file %s"%hists_path)
+
+    return hists
+
+################################################################################
+
+def patch_Gram(X, dic, patch_width, hists):
     """
         Generate the Gram matrix corresponding to the patch feature.
 
         Arguments:
             - X : dataset
             - dic : dictionnary of all words
+            - patch_width : width of the patch
 
         Returns:
             - K : Gram matrix
@@ -306,23 +353,6 @@ def patch_Gram(X, dic, patch_width):
         K = np.loadtxt(gram_path, delimiter=',')
         logging.info("Gram matrix loaded from file")
     else:
-        # initialize variables
-        hists = np.zeros((X.shape[0], dic.shape[0]))
-        K = np.zeros((X.shape[0], X.shape[0]))
-        logging.info("Building Gram matrix...")
-
-        # build all histograms
-        logging.info("Histograms 0%%")
-        for i in range(0, X.shape[0]):
-            # retrieve the first histogram
-            im_i = build_image(X[i,:])
-            hists[i,:] = patch_hist(im_i, dic, patch_width)
-
-            # display progress
-            if (i + 1) % (X.shape[0] / 5) == 0:
-                p = (i + 1) / (X.shape[0] / 5) * 20
-                logging.info("Histograms %d%%"%p)
-
         # compute the Gram matrix
         K = hists.dot(hists.T)
 
@@ -334,7 +364,7 @@ def patch_Gram(X, dic, patch_width):
 
 ################################################################################
 
-def SVM_kernel(K, Y, C):
+def SVM_kernel(K, Y, C, hists):
     """
         Solve the quadratic problem with dual formulation using the kernel Gram
         matrix.
@@ -348,91 +378,56 @@ def SVM_kernel(K, Y, C):
             - K : kernel Gram matrix
             - Y : data labels
             - C : regularisation parameter for the SVM soft margin
+            - hists : list of histograms of all images
 
         Returns:
-            - alpha : lagrangian multipliers
+            - w : vector in feature space
+            - rho : intercept
     """
     # initialize logger
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
-    # define path
-    alpha_path = "alpha_SVM.csv"
+    # number of samples
+    n = K.shape[0]
 
-    # check if it already exists
-    if os.path.isfile(alpha_path):
-        # load the data
-        alpha = np.loadtxt(alpha_path, delimiter=',')
-        logging.info("SVM dual coefs loaded from file")
-    else:
-        # number of samples
-        n = K.shape[0]
+    # QP objective function parameters
+    P = K
+    q = - Y
 
-        # QP objective function parameters
-        P = K * np.outer(Y, Y)
-        q = - np.ones(n)
+    # QP inequality constraint parameters
+    G = np.zeros((2*n, n))
+    G[0:n,:] = - np.diag(Y)
+    G[n:2*n,:] = np.diag(Y)
+    h = np.zeros((2*n,1))
+    h[0:n,0] = 0
+    h[n:2*n,0] = C
 
-        # QP inequality constraint parameters
-        G = np.zeros((2*n, n))
-        G[0:n,:] = - np.eye(n)
-        G[n:2*n,:] = np.eye(n)
-        h = np.zeros((2*n,1))
-        h[0:n,0] = 0
-        h[n:2*n,0] = C
+    # QP equality constraint parameters
+    A = np.ones((1,n))
+    b = np.array([0])
 
-        # QP equality constraint parameters
-        A = Y.reshape(1,n)
-        b = np.array([0])
+    # convert all matrix to cvxopt matrix
+    P_qp = cvxopt.matrix(P.astype(np.double))
+    q_qp = cvxopt.matrix(q.astype(np.double))
+    G_qp = cvxopt.matrix(G.astype(np.double))
+    h_qp = cvxopt.matrix(h.astype(np.double))
+    A_qp = cvxopt.matrix(A.astype(np.double))
+    b_qp = cvxopt.matrix(b.astype(np.double))
 
-        # convert all matrix to cvxopt matrix
-        P_qp = cvxopt.matrix(P.astype(np.double))
-        q_qp = cvxopt.matrix(q.astype(np.double))
-        G_qp = cvxopt.matrix(G.astype(np.double))
-        h_qp = cvxopt.matrix(h.astype(np.double))
-        A_qp = cvxopt.matrix(A.astype(np.double))
-        b_qp = cvxopt.matrix(b.astype(np.double))
+    # solve
+    solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
 
-        # solve
-        solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
+    # retrieve lagrangian multipliers
+    alpha = np.array(solution['x']).flatten()
 
-        # retrieve lagrangian multipliers
-        alpha = Y*np.array(solution['x']).flatten()
+    # compute the intercept
+    fx  = K.dot(alpha.reshape(n,1))
+    rho = -0.5 * (fx[Y>0].min() + fx[Y<0].max())
 
-        # save the matrix
-        np.savetxt(alpha_path, alpha, delimiter=',')
-        logging.info("SVM dual coefs saved in file %s"%alpha_path)
+    # compute the representation
+    w = alpha.reshape(1,n).dot(hists).flatten()
 
-    return alpha
-
-################################################################################
-
-def predictor_SVM(alpha, Xtr, dic, patch_width):
-    """
-        Compute the SVM predictor from the lagrangian multipliers and the
-        corresponding histograms.
-
-        Arguments:
-            - alpha : lagrangian multipliers
-            - Xtr : training dataset
-            - dic : dictionnary of all words
-            - patch_width : width of the patch
-
-        Returns:
-            - predictor : SVM predictor
-    """
-    # build all histograms
-    hists = np.zeros((Xtr.shape[0], dic.shape[0]))
-    for i in range(0, Xtr.shape[0]):
-        # retrieve the first histogram
-        im_i = build_image(Xtr[i,:])
-        hists[i,:] = patch_hist(im_i, dic, patch_width)
-
-    # compute predictor
-    predictor = alpha.dot(hists)
-
-    # compute prediction score
-    prediction = hists.dot(predictor)
-
-    return prediction
+    return w, rho
 
 ################################################################################
 
@@ -492,7 +487,8 @@ def log_reg_kernel(K, Y, lambd):
             - lambd : regularization parameter
 
         Returns:
-            - alpha : minimizer
+            - alpha : minimizer in RHKS
+            - rho : intercept
     """
     # initialize variables
     n = K.shape[0]
@@ -500,7 +496,7 @@ def log_reg_kernel(K, Y, lambd):
     alpha_prev = np.copy(alpha)
     diff = 1
 
-    # solve with Newton method
+    # solve alpha with Newton method
     while diff > 1e-6:
         # compute the new solution
         m = K.dot(alpha)
@@ -513,43 +509,39 @@ def log_reg_kernel(K, Y, lambd):
         diff = np.abs(alpha-alpha_prev).sum()
         alpha_prev = np.copy(alpha)
 
-    return alpha.flatten()
+    # compute the intercept rho
+    fx = (K * alpha).sum(axis=1)
+    rho = -0.5 * (fx[Y>0].min() + fx[Y<0].max())
+
+    return alpha.flatten(), rho
 
 ################################################################################
 
 if __name__ == "__main__":
-    # # load the data
-    # Xtr, Ytr = load_data()
+    # load the data
+    Xtr, Ytr = load_data()
 
-    # # build the dictionnary
-    # patch_width = 4
-    # n_voc = 1000
-    # dic = patch_dictionnary(Xtr, n_voc, patch_width)
+    # build the dictionnary
+    patch_width = 4
+    n_voc = 1000
+    dic = patch_dictionnary(Xtr, n_voc, patch_width)
 
-    # # generate the Gram matrix
-    # K = patch_Gram(Xtr, dic, patch_width)
+    # generate histograms list
+    hists = patch_hists(Xtr, dic, patch_width)
 
-    # Y = np.copy(Ytr).astype(np.double)
-    # Y[Y!=3] = -1
-    # Y[Y==3] = 1
+    # generate the Gram matrix
+    K = patch_Gram(Xtr, dic, patch_width, hists)
 
-    # # train the SVM
-    # C = 100
-    # alpha = SVM_kernel(K, Y, C)
-    # prediction = predictor_SVM(alpha, Xtr, dic, patch_width)
+    # modify data
+    n = K.shape[0]
+    Y = np.copy(Ytr).astype(np.double)
+    Y[Y!=3] = -1
+    Y[Y==3] = 1
 
-    n = 10
-    X = np.random.rand(n)*2-1
-    Y = np.sign(X)
-    X = X + 2
-    K = np.outer(X,X)
-
-    alpha = log_reg_kernel(K, Y, 1)
-
-    print("i\ty\ty'\tf(x_i)")
-    for i in range(0,n):
-        fx = np.sum(alpha * (K[:,i].flatten()))
-        print("%d\t%d\t%d\t%f"%(i,Y[i],np.sign(fx),fx))
+    # train our SVM
+    C = 100
+    w, rho = SVM_kernel(K, Y, C, hists)
+    print(w)
 
 
 
