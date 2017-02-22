@@ -7,10 +7,6 @@ import cv2
 import logging
 import cvxopt
 from sklearn import svm
-from svm_project_utils import plot_dataset, datasets
-from scipy import linalg
-import pdb
-
 
 ################################################################################
 
@@ -356,38 +352,54 @@ def SVM_kernel(K, Y, C):
         Returns:
             - alpha : lagrangian multipliers
     """
-    # number of samples
-    n = K.shape[0]
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
-    # QP objective function parameters
-    P = K * np.outer(Y, Y)
-    q = - np.ones(n)
+    # define path
+    alpha_path = "alpha_patch.csv"
 
-    # QP inequality constraint parameters
-    G = np.zeros((2*n, n))
-    G[0:n,:] = - np.eye(n)
-    G[n:2*n,:] = np.eye(n)
-    h = np.zeros((2*n,1))
-    h[0:n,0] = 0
-    h[n:2*n,0] = C
+    # check if it already exists
+    if os.path.isfile(alpha_path):
+        # load the data
+        alpha = np.loadtxt(alpha_path, delimiter=',')
+        logging.info("SVM dual coefs loaded from file")
+    else:
+        # number of samples
+        n = K.shape[0]
 
-    # QP equality constraint parameters
-    A = Y.reshape(1,n)
-    b = np.array([0])
+        # QP objective function parameters
+        P = K * np.outer(Y, Y)
+        q = - np.ones(n)
 
-    # convert all matrix to cvxopt matrix
-    P_qp = cvxopt.matrix(P.astype(np.double))
-    q_qp = cvxopt.matrix(q.astype(np.double))
-    G_qp = cvxopt.matrix(G.astype(np.double))
-    h_qp = cvxopt.matrix(h.astype(np.double))
-    A_qp = cvxopt.matrix(A.astype(np.double))
-    b_qp = cvxopt.matrix(b.astype(np.double))
+        # QP inequality constraint parameters
+        G = np.zeros((2*n, n))
+        G[0:n,:] = - np.eye(n)
+        G[n:2*n,:] = np.eye(n)
+        h = np.zeros((2*n,1))
+        h[0:n,0] = 0
+        h[n:2*n,0] = C
 
-    # solve
-    solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
+        # QP equality constraint parameters
+        A = Y.reshape(1,n)
+        b = np.array([0])
 
-    # retrieve lagrangian multipliers
-    alpha = Y*np.array(solution['x']).flatten()
+        # convert all matrix to cvxopt matrix
+        P_qp = cvxopt.matrix(P.astype(np.double))
+        q_qp = cvxopt.matrix(q.astype(np.double))
+        G_qp = cvxopt.matrix(G.astype(np.double))
+        h_qp = cvxopt.matrix(h.astype(np.double))
+        A_qp = cvxopt.matrix(A.astype(np.double))
+        b_qp = cvxopt.matrix(b.astype(np.double))
+
+        # solve
+        solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
+
+        # retrieve lagrangian multipliers
+        alpha = Y*np.array(solution['x']).flatten()
+
+        # save the matrix
+        np.savetxt(alpha_path, alpha, delimiter=',')
+        logging.info("SVM dual coefs saved in file %s"%alpha_path)
 
     return alpha
 
@@ -407,42 +419,137 @@ def predictor_SVM(alpha, Xtr, dic, patch_width):
         Returns:
             - predictor : SVM predictor
     """
-    # intialize variables
-    predictor = np.zeros(dic.shape[0])
-
-    # loop through all vectors
+    # build all histograms
+    hists = np.zeros((Xtr.shape[0], dic.shape[0]))
     for i in range(0, Xtr.shape[0]):
         # retrieve the first histogram
-        im = build_image(Xtr[i,:])
-        hist = patch_hist(im, dic, patch_width)
-        predictor += hist * alpha[i] * kernel(X)  ## modified
+        im_i = build_image(Xtr[i,:])
+        hists[i,:] = patch_hist(im_i, dic, patch_width)
 
-    print(predictor)
-    return predictor
+    # compute predictor
+    predictor = alpha.dot(hists)
+
+    # compute prediction score
+    prediction = hists.dot(predictor)
+
+    return prediction
+
+################################################################################
+
+def solve_WKRR(K, Y, W, lambd):
+    """
+        Solve the weighted kernel ridge regression.
+
+        Arguments:
+            - K : kernel Gram matrix
+            - Y : data labels
+            - W : weights
+            - lambd : regularization parameter
+
+        Returns:
+            - alpha : minimizer
+    """
+    # retrieve dimensions
+    n = K.shape[0]
+
+    # internmediary matrices
+    W_sqrt = np.diag(np.sqrt(W.flatten()))
+    A = W_sqrt.dot(K).dot(W_sqrt) + lambd * n * np.eye(n)
+    A = A.dot(np.diag(np.reciprocal(np.sqrt(W.flatten()))))
+    b = W_sqrt.dot(Y.reshape(n,1))
+
+    # compute solution
+    alpha = np.linalg.solve(A, b)
+
+    return alpha.flatten()
+
+################################################################################
+
+def logit(u):
+    """
+        Compute the logit function of a numpy array
+
+        Arguments:
+            - u : numpy array
+
+        Returns:
+            - res : logit of u
+    """
+    # compute
+    res = np.reciprocal(1 + np.exp(-u))
+
+    return res
+
+################################################################################
+
+def log_reg_kernel(K, Y, lambd):
+    """
+        Kernel logistic regression
+
+        Arguments:
+            - K : kernel Gram matrix
+            - Y : data labels
+            - lambd : regularization parameter
+
+        Returns:
+            - alpha : minimizer
+    """
+    # initialize variables
+    n = K.shape[0]
+    alpha = np.zeros(n)
+    alpha_prev = np.copy(alpha)
+    diff = 1
+
+    # solve with Newton method
+    while diff > 1e-6:
+        # compute the new solution
+        m = K.dot(alpha)
+        P = -logit(-Y * m)
+        W = logit(m) * logit(-m)
+        Z = m + Y * np.reciprocal(logit(-Y * m))
+        alpha = solve_WKRR(K, Z, W, lambd)
+
+        # compute the difference
+        diff = np.abs(alpha-alpha_prev).sum()
+        alpha_prev = np.copy(alpha)
+
+    return alpha.flatten()
 
 ################################################################################
 
 if __name__ == "__main__":
-    # load the data
-    Xtr, Ytr = load_data()       # testing dataset
+    # # load the data
+    # Xtr, Ytr = load_data()
 
-    # initialize variables
-    patch_width = 4
-    n_voc = 1000
+    # # build the dictionnary
+    # patch_width = 4
+    # n_voc = 1000
+    # dic = patch_dictionnary(Xtr, n_voc, patch_width)
 
-    # build the dictionnary
-    dic = patch_dictionnary(Xtr, n_voc, patch_width)
+    # # generate the Gram matrix
+    # K = patch_Gram(Xtr, dic, patch_width)
 
-    # generate the Gram matrix
-    K = patch_Gram(Xtr, dic, patch_width)
+    # Y = np.copy(Ytr).astype(np.double)
+    # Y[Y!=3] = -1
+    # Y[Y==3] = 1
 
-    # train the SVM
-	alpha = SVM_kernel(K, Y, C)
-    print(alpha)
+    # # train the SVM
+    # C = 100
+    # alpha = SVM_kernel(K, Y, C)
+    # prediction = predictor_SVM(alpha, Xtr, dic, patch_width)
 
-    # compute the predictor
-    # predictor = predictor_SVM(alpha, Xtr, dic, patch_width)
+    n = 10
+    X = np.random.rand(n)*2-1
+    Y = np.sign(X)
+    X = X + 2
+    K = np.outer(X,X)
 
+    alpha = log_reg_kernel(K, Y, 1)
+
+    print("i\ty\ty'\tf(x_i)")
+    for i in range(0,n):
+        fx = np.sum(alpha * (K[:,i].flatten()))
+        print("%d\t%d\t%d\t%f"%(i,Y[i],np.sign(fx),fx))
 
 
 
