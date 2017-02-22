@@ -356,7 +356,7 @@ def SVM_kernel(K, Y, C):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
     # define path
-    alpha_path = "alpha_patch.csv"
+    alpha_path = "alpha_SVM.csv"
 
     # check if it already exists
     if os.path.isfile(alpha_path):
