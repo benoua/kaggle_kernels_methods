@@ -387,12 +387,97 @@ def SVM_kernel(K, Y, C):
     solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
 
     # retrieve lagrangian multipliers
-    alpha = Y*np.array(solution['x']).flatten()
+    alpha = np.array(solution['x']).flatten()
 
     return alpha
 
 ################################################################################
 
+class quadra_pb(object):
+	# Quadratic problem for the cvxopt solver:
+	#             min         1/2 x^T P x -  x^T 1n
+	#             s.t.        Gx <= h
+
+	#         Arguments:
+	#             - K : kernel Gram matrix
+	#             - Y : data labels
+	#             - C : regularisation parameter for the SVM soft margin
+
+	#         Attributes:
+	#             - grad : gradient of objectiv function
+	#             - f_ : objectiv function
+	#             - g_ : indicator function on [0,C]
+	#             - prox_g : proximal opérator of G
+	# 			  - lipschitz_constant : Lipschitz constant of objectives function
+
+    def __init__(self, K, Y, C):
+        self.H = Y * K * np.transpose(Y)
+        self.n, self.d = self.H.shape
+        self.C = C
+
+    def f_(self, x):
+        '''compute f(x)'''
+        return 1. / 2 * np.dot( x.T, np.dot (self.H, x) ) - x.sum()
+
+    def grad(self, x):
+        '''compute the gradient of f'''
+        return np.dot( self.H , x) - np.ones(self.n)
+
+    def grad_i(self, x, i):
+        '''coordinate gradient'''
+        return (np.dot(self.H[i].T , x) -1 )
+
+    def lipschitz_constant(self):
+        """Return the Lipschitz constant of the gradient"""
+        L = linalg.norm( self.H )
+        return L
+
+    def lipschitz_constant_i(self):
+        """Return the Lipschitz constant for all coordinates"""
+        L = [linalg.norm( self.H[i] ) * self.C for i in range(self.n)]
+        return L
+
+    def prox_g(self, x, s=1, t=1.):
+        """Proximal operator for g at x : """
+        return x * (x <= self.C) *  (x >= 0)
+
+    def g_(self, x, s):
+        """value of g function, being the indicator function on [0,C] """
+        if (x.any() > self.C) + (x.any() < 0) :
+            aux = np.inf
+        else :
+            aux = 0
+        return aux
+
+################################################################################
+
+
+
+def fista_svm(x0, f, grad_f, g, prox_g, step, n_iter=50, verbose=True, callback = None):
+    """FISTA algorithm"""
+
+    x = x0.copy()
+    y = x0.copy()
+    t = 1.
+
+    for _ in range(n_iter):
+
+        t_new = (1 + np.sqrt(1 + 4*t**2)) / 2
+        x_new = prox_g( x = y - step * grad_f ( y ), s= step, t=1.)
+        y_new = x_new + (t - 1) / t_new * (x_new - x)
+
+        t = t_new
+        x = x_new
+        y = y_new
+
+        # Update metrics after each iteration.
+        if callback:
+            callback(x)
+    return x
+
+
+
+################################################################################
 def predictor_SVM(alpha, Xtr, dic, patch_width):
     """
         Compute the SVM predictor from the lagrangian multipliers and the
@@ -422,26 +507,155 @@ def predictor_SVM(alpha, Xtr, dic, patch_width):
 
 ################################################################################
 
+
+def kernel(X):
+	"""
+		Compute the Gram Matrix for any given vector
+
+		Arguments :
+			- X : entry data
+
+		Returns :
+			- Gram Matrix
+	"""
+	n = X.shape[0]
+	K = np.empty((n, n))
+	for i in range(n):
+		for j in range(n):
+			K[i, j] = np.dot(X[i], X[j])
+	return K
+
+
+def rbf_kernel(X, gamma = None):
+	"""
+	Compute the RBF Gram Matrix for any given vector
+
+	Arguments :
+	- X : entry data
+	- gamma : float, if None: 1.0 / n_samples_X
+
+	Returns :
+	- Gram Matrix
+	"""
+	n = X.shape[0]
+	K = np.empty((n, n))
+	if gamma is None:
+		gamma = 1. / n
+
+	for i in range(n):
+		for j in range(n):
+			K[i, j] = np.exp(-gamma * np.linalg.norm(X[i] - X[j]))
+	return K
+
+##########################################################
+
+def cd(x0, grad_i, prox_g, L, max_iter):
+
+	n_features = L.shape[0]
+	max_iter = max_iter * n_features
+
+	x = x0.copy()
+	for k in range(max_iter + 1):
+		#opti of the i-th coordinate
+		i = k % n_features
+
+		x[i] -= 1/ L[i] * grad_i(x, i)
+		x[i] = prox_g(x[i])
+
+	return x
+
+################################################################################
+
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr = load_data()       # testing dataset
+    # Xtr, Ytr = load_data()       # testing dataset
 
     # initialize variables
-    patch_width = 4
-    n_voc = 1000
+    # patch_width = 4
+    # n_voc = 1000
 
     # build the dictionnary
-    dic = patch_dictionnary(Xtr, n_voc, patch_width)
+    # dic = patch_dictionnary(Xtr, n_voc, patch_width)
 
+    # pdb.set_trace()
     # generate the Gram matrix
-    K = patch_Gram(Xtr, dic, patch_width)
+    # K = patch_Gram(Xtr, dic, patch_width)
 
-    # train the SVM
+    # simulate data
+    # n = 10
+    # X = np.random.rand(n)
+    # Y = 2 * np.random.randint(2, size=n) - 1
+    # K = np.outer(X,X)
+
+	# simulate gaussian data BL
+	n = 100
+	C = 1
+	X, Y = datasets(name='gaussian', n_points=n, sigma=1.5)
+	X = np.concatenate((X, np.ones((len(X), 1))), axis=1) # adding intercept to X
+	K = kernel(X)
+	model = quadra_pb(K=K , Y=Y, C=C)
+
+
+	# Train SVM with intercept
+	max_iter = 20000
+	# step = 1. / model.lipschitz_constant()
+	x_init = np.random.randn(X.shape[0])
+	# mu_fista = fista_svm(x_init, model.f_, model.grad, model.g_, model.prox_g,
+	# 	step = step, n_iter=max_iter, verbose=False , callback =None)
+	# print(mu_fista)
+	L = np.array(model.lipschitz_constant_i())
+	x_star = cd(x_init, model.grad_i, model.prox_g, L, max_iter)
+	print(x_star[np.abs(x_star) > 1e-5])
+	print(np.where(np.abs(x_star)>1e-5))
+
+
+	# train the SVM
+	C = 1
+	clf = svm.SVC(kernel='precomputed', C=C)
+	clf.fit(K, Y)
+	print(clf.dual_coef_)
+	print(np.sort(clf.support_))
+
+
 	alpha = SVM_kernel(K, Y, C)
-    print(alpha)
+	print(alpha[np.abs(alpha) > 1e-5])
+	print(np.where(np.abs(alpha)>1e-5))
+
+
 
     # compute the predictor
     # predictor = predictor_SVM(alpha, Xtr, dic, patch_width)
+
+
+################################################################################
+
+# def one_vs_all_svms (K, Y, C):
+# 	"""
+# 		Multilabel classification SVM : train all classifiers with a one vs all rule.
+
+#         Arguments:
+#             - K : kernel Gram matrix
+#             - Y : data labels
+#             - C : regularisation parameter for the SVM soft margin
+
+# 		Returns :
+# 			- Most probable class
+# 	"""
+# 	num_classes = np.max(Y) + 1
+# 	svm_classifiers = []
+# 	alphas = []
+# 	for i in range(num_classes):
+
+# 		idxs_i = Y == i
+# 		Y[idxs_i] = 1
+# 		Y[-idxs_i] = -1
+
+# 		alphas.append(SVM_kernel(K, Y, C))
+
+# 		# svm_classifiers.append .. add the found classifier in this list.
+
+
+
 
 
 
