@@ -29,16 +29,16 @@ def load_data():
 
     # load the data
     Xtr = np.genfromtxt(Xtr_path, delimiter=',')
-    # Xte = np.genfromtxt(Xte_path, delimiter=',')
+    Xte = np.genfromtxt(Xte_path, delimiter=',')
     Ytr = np.loadtxt(Ytr_path, delimiter=',', skiprows=1)
 
     # trim the useless data
     Xtr = Xtr[:,0:3072]
-    # Xte = Xte[:,0:3072]
+    Xte = Xte[:,0:3072]
     Ytr = Ytr[:,1].astype(np.double)
     logging.info("%d images loaded from file"%Xtr.shape[0])
 
-    return Xtr, Ytr
+    return Xtr, Ytr, Xte
 
 ################################################################################
 
@@ -539,13 +539,13 @@ def error(Ypred, Y):
             - err : percentage of false labeling
     """
 
-    return 100. * np.sum(Ypred == Y) / Y.shape[0]
+    return 100. * np.sum(Ypred != Y) / Y.shape[0]
 
 ################################################################################
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr = load_data()
+    Xtr, Ytr, Xte = load_data()
 
     # build the dictionnary
     patch_width = 4
@@ -558,17 +558,25 @@ if __name__ == "__main__":
     # generate the Gram matrix
     K = patch_Gram(Xtr, dic, patch_width, hists)
 
-    # find best C
-    print("C\tError")
-    for C in [1, 10, 100, 500]:
-        # train our SVM
-        C = 100
-        predictors = SVM_predictors(K, Ytr, C, hists)
-        Ypred = SVM_predict(Xtr, predictors, dic, patch_width)
+    # # find best C
+    # print("C\tError\tsk-learn")
+    # for C in [0.01, 0.05, 0.1, 0.5, 1, 10, 100, 500, 1000]:
+    #     # train our SVM
+    #     predictors = SVM_predictors(K, Ytr, C, hists)
+    #     Ypred = SVM_predict(Xtr, predictors, dic, patch_width)
 
-        # display results
-        print("%d\t%f"%(C, error(Ypred, Y)))
+    #     # train their SVM
+    #     clf = svm.SVC(kernel='precomputed', C=C)
+    #     clf.fit(K, Ytr)
 
+    #     # display results
+    #     print("%0.2f\t%d\t%d"%(C, error(Ypred, Ytr), error(clf.predict(K),Ytr)))
 
-
+    C = 1
+    predictors = SVM_predictors(K, Ytr, C, hists)
+    Ypred = SVM_predict(Xte, predictors, dic, patch_width)
+    n = Ypred.shape[0]
+    data = np.hstack((np.arange(1,n+1).reshape(n,1),Ypred.reshape(n,1)))
+    np.savetxt("test.csv", data, header="Id,Prediction", comments="", fmt="%d",
+        delimiter=',')
 
