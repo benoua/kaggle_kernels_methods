@@ -384,15 +384,12 @@ def SVM_kernel(K, Y, C, hists):
             - w : vector in feature space
             - rho : intercept
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
     # number of samples
     n = K.shape[0]
 
     # QP objective function parameters
     P = K
-    q = - Y
+    q = -Y
 
     # QP inequality constraint parameters
     G = np.zeros((2*n, n))
@@ -414,6 +411,9 @@ def SVM_kernel(K, Y, C, hists):
     A_qp = cvxopt.matrix(A.astype(np.double))
     b_qp = cvxopt.matrix(b.astype(np.double))
 
+    # hide outputs
+    cvxopt.solvers.options['show_progress'] = False
+
     # solve
     solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
 
@@ -431,7 +431,7 @@ def SVM_kernel(K, Y, C, hists):
 
 ################################################################################
 
-def SVM_ovo(K, Y, C, hists):
+def SVM_predictors(K, Y, C, hists):
     """
         Implement the one versus one strategy for multiclass SVM.
 
@@ -440,6 +440,9 @@ def SVM_ovo(K, Y, C, hists):
             - Y : data labels
             - C : regularisation parameter for the SVM soft margin
             - hists : list of histograms of all images
+
+        Returns:
+            - predictors : predictor of each SVM
     """
     # retrieve unique labels
     Y_unique = np.unique(Y)
@@ -471,10 +474,72 @@ def SVM_ovo(K, Y, C, hists):
             # update iterator
             k = k + 1
 
-    print(predictors)
-    print(predictors.shape)
+    return predictors
 
-    return
+################################################################################
+
+def SVM_predict(X, predictors, dic, patch_width):
+    """
+        Predict the label using a predictor
+
+        Arguments:
+            - X : dataset
+            - predictors : predictor of each SVM
+            - dic : dictionnary of all words
+            - width : width of the patch
+
+        Returns:
+            - Ypred : predicted data labels
+    """
+    # retrieve dimensions
+    N = int(np.sqrt(2 * predictors.shape[0] + 1./4) - 1./2)
+    n = X.shape[0]
+
+    # loop through all images
+    Ypred = np.zeros(n)
+    for l in range(0,n):
+        # build histogram
+        im = build_image(X[l,:])
+        hist = patch_hist(im, dic, patch_width)
+
+        # initialize variables
+        votes = np.zeros((N,N))
+        k = 0
+
+        # loop through all pairs
+        for i in range(0,N-1):
+            for j in range(i+1,N):
+                # retrieve SVM parameters
+                w = predictors[k,0:-1].flatten()
+                rho = predictors[k,-1]
+
+                # update vote
+                score = w.dot(hist) + rho
+                votes[i,j] = score
+                votes[j,i] = -score
+
+                # update iterator
+                k = k + 1
+
+        Ypred[l] = np.sign(votes).sum(axis=1).argmax()
+
+    return Ypred
+
+################################################################################
+
+def error(Ypred, Y):
+    """
+        Compute the error between prediction and ground-truth.
+
+        Arguments:
+            - Ypred : predicted data labels
+            - Y : data labels
+
+        Returns:
+            - err : percentage of false labeling
+    """
+
+    return 100. * np.sum(Ypred == Y) / Y.shape[0]
 
 ################################################################################
 
@@ -493,9 +558,17 @@ if __name__ == "__main__":
     # generate the Gram matrix
     K = patch_Gram(Xtr, dic, patch_width, hists)
 
-    # train our SVM
-    C = 100
-    SVM_ovo(K, Ytr, C, hists)
+    # find best C
+    print("C\tError")
+    for C in [1, 10, 100, 500]:
+        # train our SVM
+        C = 100
+        predictors = SVM_predictors(K, Ytr, C, hists)
+        Ypred = SVM_predict(Xtr, predictors, dic, patch_width)
+
+        # display results
+        print("%d\t%f"%(C, error(Ypred, Y)))
+
 
 
 
