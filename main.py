@@ -421,8 +421,11 @@ def SVM_kernel(K, Y, C, hists):
     alpha = np.array(solution['x']).flatten()
 
     # compute the intercept
-    fx  = K.dot(alpha.reshape(n,1))
-    rho = -0.5 * (fx[Y>0].min() + fx[Y<0].max())
+    svp = np.where((alpha<(0.99*C))*(alpha>(0.01*C)))[0]
+    svn = np.where((alpha>(-0.99*C))*(alpha<(-0.01*C)))[0]
+    rhop = 1 - K.dot(alpha)[svp].mean()
+    rhon = - 1 - K.dot(alpha)[svn].mean()
+    rho = 0.5 * (rhop + rhon)
 
     # compute the representation
     w = alpha.reshape(1,n).dot(hists).flatten()
@@ -431,7 +434,7 @@ def SVM_kernel(K, Y, C, hists):
 
 ################################################################################
 
-def SVM_predictors(K, Y, C, hists):
+def SVM_ovo_predictors(K, Y, C, hists):
     """
         Implement the one versus one strategy for multiclass SVM.
 
@@ -444,41 +447,110 @@ def SVM_predictors(K, Y, C, hists):
         Returns:
             - predictors : predictor of each SVM
     """
-    # retrieve unique labels
-    Y_unique = np.unique(Y)
-    N = Y_unique.shape[0]
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
-    # go through all labels
-    predictors = np.zeros((N * (N - 1) / 2, hists.shape[1] + 1))
-    k = 0
-    for i in range(0, Y_unique.shape[0]-1):
-        for j in range(i+1, Y_unique.shape[0]):
-            # build the data mask
-            mask = (Y==Y_unique[i]) + (Y==Y_unique[j])
+    # define path
+    path = "predictors_ovo.csv"
 
-            # select only the required data
-            K_ij = K[mask,:]
-            K_ij = K_ij[:,mask]
-            hists_ij = hists[mask,:]
-            Y_ij = Y[mask]
-            Y_ij[Y_ij==Y_unique[j]] = -1
-            Y_ij[Y_ij==Y_unique[i]] = 1
+    # check if it already exists
+    if os.path.isfile(path):
+        # load the matrix
+        predictors = np.loadtxt(path, delimiter=',')
+        logging.info("Predictors ovo loaded from file")
+    else:
+        # retrieve unique labels
+        Y_unique = np.unique(Y)
+        N = Y_unique.shape[0]
 
-            # compute the corresponding SVM
-            w, rho = SVM_kernel(K_ij, Y_ij, C, hists_ij)
+        # go through all labels
+        predictors = np.zeros((N * (N - 1) / 2, hists.shape[1] + 1))
+        k = 0
+        for i in range(0, Y_unique.shape[0]-1):
+            for j in range(i+1, Y_unique.shape[0]):
+                # build the data mask
+                mask = (Y==Y_unique[i]) + (Y==Y_unique[j])
 
-            # store the values
-            predictors[k,0:-1] = w.flatten()
-            predictors[k,-1] = rho
+                # select only the required data
+                K_ij = K[mask,:]
+                K_ij = K_ij[:,mask]
+                hists_ij = hists[mask,:]
+                Y_ij = Y[mask]
+                Y_ij[Y_ij==Y_unique[j]] = -1
+                Y_ij[Y_ij==Y_unique[i]] = 1
 
-            # update iterator
-            k = k + 1
+                # compute the corresponding SVM
+                w, rho = SVM_kernel(K_ij, Y_ij, C, hists_ij)
+
+                # store the values
+                predictors[k,0:-1] = w.flatten()
+                predictors[k,-1] = rho
+
+                # update iterator
+                k = k + 1
+
+        # save data
+        np.savetxt(path, predictors, delimiter=',')
+        logging.info("Predictors ovo saved in file %s"%path)
 
     return predictors
 
 ################################################################################
 
-def SVM_predict(X, predictors, dic, patch_width):
+def SVM_ova_predictors(K, Y, C, hists):
+    """
+        Implement the one versus all strategy for multiclass SVM.
+
+        Arguments:
+            - K : kernel Gram matrix
+            - Y : data labels
+            - C : regularisation parameter for the SVM soft margin
+            - hists : list of histograms of all images
+
+        Returns:
+            - predictors : predictor of each SVM
+    """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+    # define path
+    path = "predictors_ova.csv"
+
+    # check if it already exists
+    if os.path.isfile(path):
+        # load the matrix
+        predictors = np.loadtxt(path, delimiter=',')
+        logging.info("Predictors ova loaded from file")
+    else:
+        # retrieve unique labels
+        Y_unique = np.unique(Y)
+        N = Y_unique.shape[0]
+
+        # go through all labels
+        predictors = np.zeros((N, hists.shape[1] + 1))
+        for i in range(0, Y_unique.shape[0]):
+            # select only the required data
+            Y_i = np.copy(Y)
+            Y_i[Y_i!=Y_unique[i]] = -1
+            Y_i[Y_i==Y_unique[i]] = 1
+
+            # compute the corresponding SVM
+            logging.info("Training SVM ova for label %d"%Y_unique[i])
+            w, rho = SVM_kernel(K, Y_i, C, hists)
+
+            # store the values
+            predictors[i,0:-1] = w.flatten()
+            predictors[i,-1] = rho
+
+        # save data
+        # np.savetxt(path, predictors, delimiter=',')
+        # logging.info("Predictors ova saved in file %s"%path)
+
+    return predictors
+
+################################################################################
+
+def SVM_ovo_predict(X, predictors, dic, patch_width):
     """
         Predict the label using a predictor
 
@@ -521,7 +593,50 @@ def SVM_predict(X, predictors, dic, patch_width):
                 # update iterator
                 k = k + 1
 
-        Ypred[l] = np.sign(votes).sum(axis=1).argmax()
+        Ypred[l] = np.sign(votes).sum(axis=0).argmax()
+
+    return Ypred
+
+################################################################################
+
+def SVM_ova_predict(X, predictors, dic, patch_width):
+    """
+        Predict the label using a predictor
+
+        Arguments:
+            - X : dataset
+            - predictors : predictor of each SVM
+            - dic : dictionnary of all words
+            - width : width of the patch
+
+        Returns:
+            - Ypred : predicted data labels
+    """
+    # retrieve dimensions
+    N = predictors.shape[0]
+    n = X.shape[0]
+
+    # loop through all images
+    Ypred = np.zeros(n)
+    for l in range(0,n):
+        # build histogram
+        im = build_image(X[l,:])
+        hist = patch_hist(im, dic, patch_width)
+
+        # initialize variables
+        votes = np.zeros(N)
+
+        # loop through all pairs
+        for i in range(0,N):
+            # retrieve SVM parameters
+            w = predictors[i,0:-1].flatten()
+            rho = predictors[i,-1]
+
+            # update vote
+            score = w.dot(hist) + rho
+            votes[i] = score
+
+        Ypred[l] = votes.argmax()
 
     return Ypred
 
@@ -558,25 +673,37 @@ if __name__ == "__main__":
     # generate the Gram matrix
     K = patch_Gram(Xtr, dic, patch_width, hists)
 
-    # # find best C
-    # print("C\tError\tsk-learn")
-    # for C in [0.01, 0.05, 0.1, 0.5, 1, 10, 100, 500, 1000]:
-    #     # train our SVM
-    #     predictors = SVM_predictors(K, Ytr, C, hists)
-    #     Ypred = SVM_predict(Xtr, predictors, dic, patch_width)
+    # find best C
+    print("C\tError")
+    for C in [0.1, 1, 10, 100]:
+        # split the data
+        perm = np.random.permutation(K.shape[0])
+        perm_tr = perm[:int(K.shape[0]*0.8)]
+        perm_te = perm[int(K.shape[0]*0.8):]
+        X_CV_tr = Xtr[perm_tr,:]
+        X_CV_te = Xtr[perm_te,:]
+        Y_CV_tr = Ytr[perm_tr]
+        Y_CV_te = Ytr[perm_te]
+        hists_CV_tr = hists[perm_tr,:]
+        K_CV_tr = K[perm_tr,:]
+        K_CV_tr = K_CV_tr[:,perm_tr]
 
-    #     # train their SVM
-    #     clf = svm.SVC(kernel='precomputed', C=C)
-    #     clf.fit(K, Ytr)
 
-    #     # display results
-    #     print("%0.2f\t%d\t%d"%(C, error(Ypred, Ytr), error(clf.predict(K),Ytr)))
+        # train our SVM
+        CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+        Y_CV_pred = SVM_ova_predict(X_CV_te, CV_predictors, dic, patch_width)
+        # predictors = SVM_ova_predictors(K, Ytr, C, hists)
+        # Ypred = SVM_ova_predict(Xtr, predictors, dic, patch_width)
 
-    C = 1
-    predictors = SVM_predictors(K, Ytr, C, hists)
-    Ypred = SVM_predict(Xte, predictors, dic, patch_width)
-    n = Ypred.shape[0]
-    data = np.hstack((np.arange(1,n+1).reshape(n,1),Ypred.reshape(n,1)))
-    np.savetxt("test.csv", data, header="Id,Prediction", comments="", fmt="%d",
-        delimiter=',')
+        # compute error
+        print("%0.1f\t%d"%(C,error(Y_CV_pred, Y_CV_te)))
+
+
+        # # train scikit SVM
+        # clf = svm.SVC(kernel='precomputed', C=C)
+        # clf.fit(K, Ytr)
+
+
+
+
 
