@@ -658,6 +658,32 @@ def error(Ypred, Y):
 
 ################################################################################
 
+def save_submit(Y):
+    """
+        Save the submission results as a csv file.
+
+        Arguments:
+            - Y : data labels
+    """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+    # retrieve dimension
+    n = Y.shape[0]
+
+    # add the ID
+    data = np.hstack((np.arange(1,n+1).reshape(n,1),Y.reshape(n,1)))
+
+    # save to file
+    filename = "submit.csv"
+    np.savetxt(filename, data, header="Id,Prediction",
+        comments="", fmt="%d", delimiter=',')
+    logging.info("Submission save in file %s"%filename)
+
+    return
+
+################################################################################
+
 if __name__ == "__main__":
     # load the data
     Xtr, Ytr, Xte = load_data()
@@ -673,37 +699,40 @@ if __name__ == "__main__":
     # generate the Gram matrix
     K = patch_Gram(Xtr, dic, patch_width, hists)
 
-    # find best C
-    print("C\tError")
-    for C in [0.1, 1, 10, 100]:
-        # split the data
-        perm = np.random.permutation(K.shape[0])
-        perm_tr = perm[:int(K.shape[0]*0.8)]
-        perm_te = perm[int(K.shape[0]*0.8):]
-        X_CV_tr = Xtr[perm_tr,:]
-        X_CV_te = Xtr[perm_te,:]
-        Y_CV_tr = Ytr[perm_tr]
-        Y_CV_te = Ytr[perm_te]
-        hists_CV_tr = hists[perm_tr,:]
-        K_CV_tr = K[perm_tr,:]
-        K_CV_tr = K_CV_tr[:,perm_tr]
+    # # find best C
+    # for C in [10]:
+    #     # split the data
+    #     perm = np.random.permutation(K.shape[0])
+    #     perm_tr = perm[:int(K.shape[0]*0.8)]
+    #     perm_te = perm[int(K.shape[0]*0.8):]
+    #     X_CV_tr = Xtr[perm_tr,:]
+    #     X_CV_te = Xtr[perm_te,:]
+    #     Y_CV_tr = Ytr[perm_tr]
+    #     Y_CV_te = Ytr[perm_te]
+    #     hists_CV_tr = hists[perm_tr,:]
+    #     K_CV_tr = K[perm_tr,:]
+    #     K_CV_tr = K_CV_tr[:,perm_tr]
 
+    #     # train our SVM
+    #     CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+    #     Y_CV_pred1 = SVM_ova_predict(X_CV_te, CV_predictors, dic, patch_width)
 
-        # train our SVM
-        CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-        Y_CV_pred = SVM_ova_predict(X_CV_te, CV_predictors, dic, patch_width)
-        # predictors = SVM_ova_predictors(K, Ytr, C, hists)
-        # Ypred = SVM_ova_predict(Xtr, predictors, dic, patch_width)
+    #     # # train scikit SVM
+    #     clf = svm.SVC(kernel='precomputed', C=C)
+    #     clf.fit(K_CV_tr, Y_CV_tr)
+    #     K_CV_te = K[perm_te,:]
+    #     K_CV_te = K_CV_te[:,perm_tr]
+    #     Y_CV_pred2 = clf.predict(K_CV_te)
 
-        # compute error
-        print("%0.1f\t%d"%(C,error(Y_CV_pred, Y_CV_te)))
+    #     # compute error
+    #     print("%0.1f\t%d\t"%
+    #         (C,error(Y_CV_pred1, Y_CV_te),error(Y_CV_pred2, Y_CV_te)))
 
-
-        # # train scikit SVM
-        # clf = svm.SVC(kernel='precomputed', C=C)
-        # clf.fit(K, Ytr)
-
-
+    # final prediction
+    C = 10
+    predictors = SVM_ova_predictors(K, Ytr, C, hists)
+    Yte = SVM_ova_predict(Xte, predictors, dic, patch_width)
+    save_submit(Yte)
 
 
 
