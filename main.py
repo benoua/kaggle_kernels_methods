@@ -144,7 +144,6 @@ def patch_list(X, patch_width):
 
     return words
 
-
 ################################################################################
 
 def kmeans(X, k, n_try):
@@ -191,7 +190,7 @@ def kmeans(X, k, n_try):
             label_change = np.sum(old_labels != labels)
             logging.info("Kmeans: iter %d-%d, change: %d, error: %0.4f" %
                 (l+1, j+1, label_change, err_tot))
-            label_change = label_change > 1000
+            label_change = label_change > 10000
             j += 1
 
             # check if at least one point is assigned to the centroid
@@ -328,14 +327,13 @@ def patch_hists(X, dic, patch_width):
 
 ################################################################################
 
-def patch_Gram(X, dic, patch_width, hists):
+def patch_Gram(X, dic, hists):
     """
         Generate the Gram matrix corresponding to the patch feature.
 
         Arguments:
             - X : dataset
             - dic : dictionnary of all words
-            - patch_width : width of the patch
 
         Returns:
             - K : Gram matrix
@@ -598,31 +596,26 @@ def SVM_ovo_predict(X, predictors, dic, patch_width):
 
 ################################################################################
 
-def SVM_ova_predict(X, predictors, dic, patch_width):
+def SVM_ova_predict(hists, predictors):
     """
         Predict the label using a predictor
 
         Arguments:
-            - X : dataset
+            - hists : histogram of the data to predict
             - predictors : predictor of each SVM
-            - dic : dictionnary of all words
-            - width : width of the patch
 
         Returns:
             - Ypred : predicted data labels
     """
     # retrieve dimensions
     N = predictors.shape[0]
-    n = X.shape[0]
+    n = hists.shape[0]
 
     # loop through all images
     Ypred = np.zeros(n)
     for l in range(0,n):
-        # build histogram
-        im = build_image(X[l,:])
-        hist = patch_hist(im, dic, patch_width)
-
         # initialize variables
+        hist = hists[l,:]
         votes = np.zeros(N)
 
         # loop through all pairs
@@ -683,24 +676,26 @@ def save_submit(Y):
 
 ################################################################################
 
-def HOG_features(im):
+def HOG_features(im, n_bins):
     """
         Compute the HOG feature representation.
 
         Arguments:
             - im : raw 2D image
+            - n_bins : number of angle bins
 
         Returns:
             - feat : feature descriptor of the image
     """
     # initialize variables
-    n_bins = 9
+
     qudrnt = 360. / n_bins
     n_block = (im.shape[0] / 4 - 1) * (im.shape[1] / 4 - 1)
-    feat = np.zeros(n_block, n_bins)
+    feat = np.zeros((n_block, n_bins))
 
     # convert RGB 2 gray image
-    im_gray = raw2gray(im)
+    # im_gray = raw2gray(im)
+    im_gray = im
 
     # compute gradient and store it as complex
     grad = np.zeros(im_gray.shape).astype(np.complex)
@@ -724,50 +719,169 @@ def HOG_features(im):
     magn_bot = magn * (angle - bin_bot * qudrnt) / qudrnt
 
     l = 0
-    for i in range(0:im.shape[0] / 4 - 1):
-        for j in range(0:im.shape[1] / 4 - 1):
-        # flatten vectors
-        bin_top_crop  = bin_top[4*i:4*(i+1),4*j:4*(j+1)].flatten()
-        bin_bot_crop  = bin_bot[4*i:4*(i+1),4*j:4*(j+1)].flatten()
-        magn_top_crop = magn_top[4*i:4*(i+1),4*j:4*(j+1)].flatten()
-        magn_bot_crop = magn_bot[4*i:4*(i+1),4*j:4*(j+1)].flatten()
+    for i in range(0,im.shape[0] / 4 - 1):
+        for j in range(0,im.shape[1] / 4 - 1):
+            # flatten vectors
+            bin_top_crop  = bin_top[4*i:4*(i+1),4*j:4*(j+1)].flatten()
+            bin_bot_crop  = bin_bot[4*i:4*(i+1),4*j:4*(j+1)].flatten()
+            magn_top_crop = magn_top[4*i:4*(i+1),4*j:4*(j+1)].flatten()
+            magn_bot_crop = magn_bot[4*i:4*(i+1),4*j:4*(j+1)].flatten()
 
-        # compute the histogram
-        hist = np.zeros(n_bins)
-        for k in range(0,n_bins):
-            hist[k] += magn_top_crop[bin_top_crop==k].sum()
-            hist[k] += magn_bot_crop[bin_bot_crop==k].sum()
+            # compute the histogram
+            hist = np.zeros(n_bins)
+            for k in range(0,n_bins):
+                hist[k] += magn_top_crop[bin_top_crop==k].sum()
+                hist[k] += magn_bot_crop[bin_bot_crop==k].sum()
 
-        # normalize histogram
-        hist = hist/np.sqrt(np.square(hist).sum())
-        feat[l,:] = hist[:]
+            # normalize histogram
+            norm = np.sqrt(np.square(hist).sum())
+            hist = hist/norm if norm > 0 else hist
+            feat[l,:] = hist[:]
 
-        # update iterator
-        l += 1
+            # update iterator
+            l += 1
 
     return feat
 
 ################################################################################
 
-def HOG(X):
+def HOG_list(X, n_bins):
     """
-        Compute the Histogram of Gradient descriptor for X
+        List all HOG words in the input X.
 
         Arguments:
             - X : dataset
+            - n_bins : number of angle bins
 
         Returns:
-            - hog_list : HOG descriptor
+            - words : list of all patches of the dataset
     """
+    # initialize the list of words
+    n_block = (32 / 4 - 1) * (32 / 4 - 1)
+    n_words = X.shape[0] * n_block
+    words = np.zeros((n_words, n_bins))
 
     # go through all image
     for i in range(0, X.shape[0]):
         # extract features
         im = build_image(X[i,:])
-        feat = patch_features(im, patch_width)
+        feat = HOG_features(im, n_bins)
 
         # add them to the list
-    return
+        words[i*n_block:(i+1)*n_block,:] = feat
+
+    return words
+
+################################################################################
+
+def HOG_dictionnary(X, n_voc, n_bins):
+    """
+        Build the patch dictionnary of the input X containing n_words using
+        K-mean clustering.
+
+        Arguments:
+            - X : dataset
+            - n_voc : number of words contained in the dictionnary
+            - n_bins : number of angle bins
+
+        Returns:
+            - dic : dictionnary of all words
+    """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+    # define path
+    dic_path = "dic_HOG.csv"
+
+    # check if a dictionnary already exists
+    if os.path.isfile(dic_path):
+        # load the dictionnary
+        dic = np.loadtxt(dic_path, delimiter=',')
+        logging.info("Dictionnary loaded from file")
+    else:
+        # build the dictionnary
+        words = HOG_list(X, n_bins)                 # compute the words list
+        print(words)
+        dic = kmeans(words, n_voc, 3)               # compute the dictionnary
+        np.savetxt(dic_path, dic, delimiter=',')    # save the dictionnary
+        logging.info("Dictionnary saved in file %s"%dic_path)
+
+    return dic
+
+################################################################################
+
+def HOG_hist(im, dic, n_bins):
+    """
+        Build the histogram representation of the image.
+
+        Arguments:
+            - im : raw 2D image
+            - dic : dictionnary of all words
+            - n_bins : number of angle bins
+
+        Returns:
+            - hist : HOG histogram
+    """
+    # retrieve the features
+    feat = HOG_features(im, n_bins)
+
+    # compute the histogram
+    hist = np.zeros(dic.shape[0])
+    for i in range(0, feat.shape[0]):
+        # find the closest dictionnary word
+        n_word = np.square(dic - feat[i,:]).sum(axis=1).argmin()
+        hist[n_word] += 1
+
+    # normalize histogram
+    hist = np.sqrt(hist / hist.sum())
+
+    return hist
+
+################################################################################
+
+def HOG_hists(X, dic, n_bins):
+    """
+        Compute histograms for all images.
+
+        Arguments:
+            - X : dataset
+            - dic : dictionnary of all words
+            - n_bins : number of angle bins
+
+        Returns:
+            - hists : list of histograms of all images
+    """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+    # define path
+    hists_path = "hists_HOG.csv"
+
+    # check if it already exists
+    if os.path.isfile(hists_path):
+        # load the matrix
+        hists = np.loadtxt(hists_path, delimiter=',')
+        logging.info("Histogram list loaded from file")
+    else:
+        logging.info("Histograms 0%%")
+
+        # build all histograms
+        hists = np.zeros((X.shape[0], dic.shape[0]))
+        for i in range(0, X.shape[0]):
+            # retrieve the first histogram
+            im_i = build_image(X[i,:])
+            hists[i,:] = HOG_hist(im_i, dic, n_bins)
+
+            # display progress
+            if (i + 1) % (X.shape[0] / 5) == 0:
+                p = (i + 1) / (X.shape[0] / 5) * 20
+                logging.info("Histograms %d%%"%p)
+
+        # save the list
+        np.savetxt(hists_path, hists, delimiter=',')
+        logging.info("Histogram list saved in file %s"%hists_path)
+
+    return hists
 
 ################################################################################
 
@@ -775,16 +889,20 @@ if __name__ == "__main__":
     # load the data
     Xtr, Ytr, Xte = load_data()
 
-    # # build the dictionnary
-    # patch_width = 4
-    # n_voc = 1000
-    # dic = patch_dictionnary(Xtr, n_voc, patch_width)
+    # build the dictionnary
+    n_voc = 500
+    n_bins = 9
+    patch_width = 4
+    dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
+    dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
 
-    # # generate histograms list
-    # hists = patch_hists(Xtr, dic, patch_width)
+    # generate histograms list
+    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+    hists = np.hstack((hists_patch, hists_HOG))
 
-    # # generate the Gram matrix
-    # K = patch_Gram(Xtr, dic, patch_width, hists)
+    # generate the Gram matrix
+    K = hists.dot(hists.T)
 
     # # find best C
     # for C in [10]:
@@ -792,34 +910,37 @@ if __name__ == "__main__":
     #     perm = np.random.permutation(K.shape[0])
     #     perm_tr = perm[:int(K.shape[0]*0.8)]
     #     perm_te = perm[int(K.shape[0]*0.8):]
-    #     X_CV_tr = Xtr[perm_tr,:]
-    #     X_CV_te = Xtr[perm_te,:]
     #     Y_CV_tr = Ytr[perm_tr]
     #     Y_CV_te = Ytr[perm_te]
     #     hists_CV_tr = hists[perm_tr,:]
+    #     hists_CV_te = hists[perm_te,:]
     #     K_CV_tr = K[perm_tr,:]
     #     K_CV_tr = K_CV_tr[:,perm_tr]
 
     #     # train our SVM
     #     CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-    #     Y_CV_pred1 = SVM_ova_predict(X_CV_te, CV_predictors, dic, patch_width)
+    #     Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+    #     print(Y_CV_pred)
 
     #     # # train scikit SVM
-    #     clf = svm.SVC(kernel='precomputed', C=C)
-    #     clf.fit(K_CV_tr, Y_CV_tr)
-    #     K_CV_te = K[perm_te,:]
-    #     K_CV_te = K_CV_te[:,perm_tr]
-    #     Y_CV_pred2 = clf.predict(K_CV_te)
+    #     # clf = svm.SVC(kernel='precomputed', C=C)
+    #     # clf.fit(K_CV_tr, Y_CV_tr)
+    #     # K_CV_te = K[perm_te,:]
+    #     # K_CV_te = K_CV_te[:,perm_tr]
+    #     # Y_CV_pred = clf.predict(K_CV_te)
 
-    #     # compute error
-    #     print("%0.1f\t%d\t"%
-    #         (C,error(Y_CV_pred1, Y_CV_te),error(Y_CV_pred2, Y_CV_te)))
+    #     print("%0.2f\t%d"%(C,error(Y_CV_pred, Y_CV_te)))
 
-    # # final prediction
-    # C = 10
-    # predictors = SVM_ova_predictors(K, Ytr, C, hists)
-    # Yte = SVM_ova_predict(Xte, predictors, dic, patch_width)
-    # save_submit(Yte)
+    # final prediction
+    C = 10
+    predictors = SVM_ova_predictors(K, Ytr, C, hists)
+    hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
+    hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
+    hists_te = np.hstack((hists_patch_te, hists_HOG_te))
+    print(hists_te.shape)
+    Yte = SVM_ova_predict(hists_te, predictors)
+    print(Yte.shape)
+    save_submit(Yte)
 
 
 
