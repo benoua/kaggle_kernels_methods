@@ -293,35 +293,12 @@ def patch_hists(X, dic, patch_width):
         Returns:
             - hists : list of histograms of all images
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
-    # define path
-    hists_path = "hists_patch.csv"
-
-    # check if it already exists
-    if os.path.isfile(hists_path):
-        # load the matrix
-        hists = np.loadtxt(hists_path, delimiter=',')
-        logging.info("Histogram list loaded from file")
-    else:
-        logging.info("Histograms 0%%")
-
-        # build all histograms
-        hists = np.zeros((X.shape[0], dic.shape[0]))
-        for i in range(0, X.shape[0]):
-            # retrieve the first histogram
-            im_i = build_image(X[i,:])
-            hists[i,:] = patch_hist(im_i, dic, patch_width)
-
-            # display progress
-            if (i + 1) % (X.shape[0] / 5) == 0:
-                p = (i + 1) / (X.shape[0] / 5) * 20
-                logging.info("Histograms %d%%"%p)
-
-        # save the list
-        np.savetxt(hists_path, hists, delimiter=',')
-        logging.info("Histogram list saved in file %s"%hists_path)
+    # build all histograms
+    hists = np.zeros((X.shape[0], dic.shape[0]))
+    for i in range(0, X.shape[0]):
+        # retrieve the first histogram
+        im_i = build_image(X[i,:])
+        hists[i,:] = patch_hist(im_i, dic, patch_width)
 
     return hists
 
@@ -507,41 +484,25 @@ def SVM_ova_predictors(K, Y, C, hists):
         Returns:
             - predictors : predictor of each SVM
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+    # retrieve unique labels
+    Y_unique = np.unique(Y)
+    N = Y_unique.shape[0]
 
-    # define path
-    path = "predictors_ova.csv"
+    # go through all labels
+    predictors = np.zeros((N, hists.shape[1] + 1))
+    for i in range(0, Y_unique.shape[0]):
+        # select only the required data
+        Y_i = np.copy(Y)
+        Y_i[Y_i!=Y_unique[i]] = -1
+        Y_i[Y_i==Y_unique[i]] = 1
 
-    # check if it already exists
-    if os.path.isfile(path):
-        # load the matrix
-        predictors = np.loadtxt(path, delimiter=',')
-        logging.info("Predictors ova loaded from file")
-    else:
-        # retrieve unique labels
-        Y_unique = np.unique(Y)
-        N = Y_unique.shape[0]
+        # compute the corresponding SVM
+        logging.info("Training SVM ova for label %d"%Y_unique[i])
+        w, rho = SVM_kernel(K, Y_i, C, hists)
 
-        # go through all labels
-        predictors = np.zeros((N, hists.shape[1] + 1))
-        for i in range(0, Y_unique.shape[0]):
-            # select only the required data
-            Y_i = np.copy(Y)
-            Y_i[Y_i!=Y_unique[i]] = -1
-            Y_i[Y_i==Y_unique[i]] = 1
-
-            # compute the corresponding SVM
-            logging.info("Training SVM ova for label %d"%Y_unique[i])
-            w, rho = SVM_kernel(K, Y_i, C, hists)
-
-            # store the values
-            predictors[i,0:-1] = w.flatten()
-            predictors[i,-1] = rho
-
-        # save data
-        # np.savetxt(path, predictors, delimiter=',')
-        # logging.info("Predictors ova saved in file %s"%path)
+        # store the values
+        predictors[i,0:-1] = w.flatten()
+        predictors[i,-1] = rho
 
     return predictors
 
@@ -667,7 +628,7 @@ def save_submit(Y):
     data = np.hstack((np.arange(1,n+1).reshape(n,1),Y.reshape(n,1)))
 
     # save to file
-    filename = "submit.csv"
+    filename = "Yte.csv"
     np.savetxt(filename, data, header="Id,Prediction",
         comments="", fmt="%d", delimiter=',')
     logging.info("Submission save in file %s"%filename)
@@ -801,7 +762,6 @@ def HOG_dictionnary(X, n_voc, n_bins):
     else:
         # build the dictionnary
         words = HOG_list(X, n_bins)                 # compute the words list
-        print(words)
         dic = kmeans(words, n_voc, 3)               # compute the dictionnary
         np.savetxt(dic_path, dic, delimiter=',')    # save the dictionnary
         logging.info("Dictionnary saved in file %s"%dic_path)
@@ -851,35 +811,12 @@ def HOG_hists(X, dic, n_bins):
         Returns:
             - hists : list of histograms of all images
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
-    # define path
-    hists_path = "hists_HOG.csv"
-
-    # check if it already exists
-    if os.path.isfile(hists_path):
-        # load the matrix
-        hists = np.loadtxt(hists_path, delimiter=',')
-        logging.info("Histogram list loaded from file")
-    else:
-        logging.info("Histograms 0%%")
-
-        # build all histograms
-        hists = np.zeros((X.shape[0], dic.shape[0]))
-        for i in range(0, X.shape[0]):
-            # retrieve the first histogram
-            im_i = build_image(X[i,:])
-            hists[i,:] = HOG_hist(im_i, dic, n_bins)
-
-            # display progress
-            if (i + 1) % (X.shape[0] / 5) == 0:
-                p = (i + 1) / (X.shape[0] / 5) * 20
-                logging.info("Histograms %d%%"%p)
-
-        # save the list
-        np.savetxt(hists_path, hists, delimiter=',')
-        logging.info("Histogram list saved in file %s"%hists_path)
+    # build all histograms
+    hists = np.zeros((X.shape[0], dic.shape[0]))
+    for i in range(0, X.shape[0]):
+        # retrieve the first histogram
+        im_i = build_image(X[i,:])
+        hists[i,:] = HOG_hist(im_i, dic, n_bins)
 
     return hists
 
@@ -890,57 +827,56 @@ if __name__ == "__main__":
     Xtr, Ytr, Xte = load_data()
 
     # build the dictionnary
-    n_voc = 500
+    n_voc = 1000
     n_bins = 9
     patch_width = 4
     dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
     dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
 
     # generate histograms list
-    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
-    hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
-    hists = np.hstack((hists_patch, hists_HOG))
+    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+    # hists = np.hstack((hists_patch, hists_HOG))
+
+    hists = HOG_hists(Xtr, dic_HOG, n_bins)
 
     # generate the Gram matrix
     K = hists.dot(hists.T)
 
-    # # find best C
-    # for C in [10]:
-    #     # split the data
-    #     perm = np.random.permutation(K.shape[0])
-    #     perm_tr = perm[:int(K.shape[0]*0.8)]
-    #     perm_te = perm[int(K.shape[0]*0.8):]
-    #     Y_CV_tr = Ytr[perm_tr]
-    #     Y_CV_te = Ytr[perm_te]
-    #     hists_CV_tr = hists[perm_tr,:]
-    #     hists_CV_te = hists[perm_te,:]
-    #     K_CV_tr = K[perm_tr,:]
-    #     K_CV_tr = K_CV_tr[:,perm_tr]
+    # find best C
+    for C in 0.1*2**np.arange(0,15):
+        for i in range(0,10):
+            # split the data
+            perm = np.random.permutation(K.shape[0])
+            perm_tr = perm[:int(K.shape[0]*0.8)]
+            perm_te = perm[int(K.shape[0]*0.8):]
+            Y_CV_tr = Ytr[perm_tr]
+            Y_CV_te = Ytr[perm_te]
+            hists_CV_tr = hists[perm_tr,:]
+            hists_CV_te = hists[perm_te,:]
+            K_CV_tr = K[perm_tr,:]
+            K_CV_tr = K_CV_tr[:,perm_tr]
 
-    #     # train our SVM
-    #     CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-    #     Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
-    #     print(Y_CV_pred)
+            # # train our SVM
+            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+            # print(Y_CV_pred)
 
-    #     # # train scikit SVM
-    #     # clf = svm.SVC(kernel='precomputed', C=C)
-    #     # clf.fit(K_CV_tr, Y_CV_tr)
-    #     # K_CV_te = K[perm_te,:]
-    #     # K_CV_te = K_CV_te[:,perm_tr]
-    #     # Y_CV_pred = clf.predict(K_CV_te)
+            # train scikit SVM
+            clf = svm.SVC(kernel='precomputed', C=C)
+            clf.fit(K_CV_tr, Y_CV_tr)
+            K_CV_te = K[perm_te,:]
+            K_CV_te = K_CV_te[:,perm_tr]
+            Y_CV_pred = clf.predict(K_CV_te)
 
-    #     print("%0.2f\t%d"%(C,error(Y_CV_pred, Y_CV_te)))
+            print("%0.2f\t%d"%(C, error(Y_CV_pred, Y_CV_te)))
 
-    # final prediction
-    C = 10
-    predictors = SVM_ova_predictors(K, Ytr, C, hists)
-    hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
-    hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
-    hists_te = np.hstack((hists_patch_te, hists_HOG_te))
-    print(hists_te.shape)
-    Yte = SVM_ova_predict(hists_te, predictors)
-    print(Yte.shape)
-    save_submit(Yte)
-
+    # # final prediction
+    # C = 10
+    # predictors = SVM_ova_predictors(K, Ytr, C, hists)
+    # hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
+    # hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
+    # hists_te = np.hstack((hists_patch_te, hists_HOG_te))
+    # Yte = SVM_ova_predict(hists_te, predictors)
 
 
