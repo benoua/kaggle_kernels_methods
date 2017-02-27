@@ -8,8 +8,7 @@ import cvxopt
 from sklearn import svm
 import pdb
 
-################################################################################
-
+######################################
 def load_data():
     """
         Load the data from the data directory.
@@ -441,8 +440,14 @@ def SVM_kernel(K, Y, C, hists):
     # compute the intercept
     svp = np.where((alpha<(0.99*C))*(alpha>(0.01*C)))[0]
     svn = np.where((alpha>(-0.99*C))*(alpha<(-0.01*C)))[0]
-    rhop = 1 - K.dot(alpha)[svp].mean()
-    rhon = - 1 - K.dot(alpha)[svn].mean()
+    if len(svp):
+        rhop = 1 - K.dot(alpha)[svp].mean()
+    else : 
+        rhop = 0
+    if len(svn):
+        rhon = - 1 - K.dot(alpha)[svn].mean()
+    else: 
+        rhon = 0
     rho = 0.5 * (rhop + rhon)
 
     # compute the representation
@@ -472,12 +477,12 @@ def SVM_ovo_predictors(K, Y, C, hists):
     path = "predictors_ovo.csv"
 
     # check if it already exists
+        # retrieve unique labels
     if os.path.isfile(path):
         # load the matrix
         predictors = np.loadtxt(path, delimiter=',')
         logging.info("Predictors ovo loaded from file")
     else:
-        # retrieve unique labels
         Y_unique = np.unique(Y)
         N = Y_unique.shape[0]
 
@@ -552,29 +557,27 @@ def SVM_ova_predictors(K, Y, C, hists):
 
 ################################################################################
 
-def SVM_ovo_predict(X, predictors, dic, patch_width):
+def SVM_ovo_predict(hists, predictors):
     """
         Predict the label using a predictor
 
         Arguments:
-            - X : dataset
             - predictors : predictor of each SVM
-            - dic : dictionnary of all words
-            - width : width of the patch
+            - hists : histogram of the data to predict
 
         Returns:
             - Ypred : predicted data labels
     """
     # retrieve dimensions
-    N = int(np.sqrt(2 * predictors.shape[0] + 1./4) - 1./2)
-    n = X.shape[0]
+    N = 10 #int(np.sqrt(2 * predictors.shape[0] + 1./4) - 1./2)
+    n = hists.shape[0]
 
     # loop through all images
     Ypred = np.zeros(n)
     for l in range(0,n):
         # build histogram
-        im = build_image(X[l,:])
-        hist = patch_hist(im, dic, patch_width)
+
+        hist = hists[l]
 
         # initialize variables
         votes = np.zeros((N,N))
@@ -589,13 +592,17 @@ def SVM_ovo_predict(X, predictors, dic, patch_width):
 
                 # update vote
                 score = w.dot(hist) + rho
-                votes[i,j] = score
-                votes[j,i] = -score
+                if score > 0:
+                    votes[i,j] = 1
+                if score < 0:
+                    votes[j,i] = 1
 
                 # update iterator
                 k = k + 1
-
-        Ypred[l] = np.sign(votes).sum(axis=0).argmax()
+        # classe to win has the most votes
+        winners = np.argwhere(votes.sum(axis=1) == np.amax(votes.sum(axis=1))).flatten()
+        # choosing randomly the final winner between all winning classes
+        Ypred[l] = np.random.choice(winners)
 
     return Ypred
 
@@ -878,50 +885,52 @@ if __name__ == "__main__":
     dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
 
     # generate histograms list
-    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
-    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
-    # hists = np.hstack((hists_patch, hists_HOG))
-
-    hists = HOG_hists(Xtr, dic_HOG, n_bins)
+    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+    hists = np.hstack((hists_patch, hists_HOG))
 
     # generate the Gram matrix
     # K = hists.dot(hists.T)
-    K = patch_Gram(Xtr, hists, kernel = 'linear', degree = 3, gamma = None)
+    K = patch_Gram(Xtr, hists, kernel = 'rbf', degree = 3, gamma = 1)
 
     # find best C
-    for C in 0.1*2**np.arange(0,15):
-        for i in range(0,10):
-            # split the data
-            perm = np.random.permutation(K.shape[0])
-            perm_tr = perm[:int(K.shape[0]*0.8)]
-            perm_te = perm[int(K.shape[0]*0.8):]
-            Y_CV_tr = Ytr[perm_tr]
-            Y_CV_te = Ytr[perm_te]
-            hists_CV_tr = hists[perm_tr,:]
-            hists_CV_te = hists[perm_te,:]
-            K_CV_tr = K[perm_tr,:]
-            K_CV_tr = K_CV_tr[:,perm_tr]
+    # for C in [100]:
+    #     for i in range(0,5):
+    #         # split the data
+    #         perm = np.random.permutation(K.shape[0])
+    #         perm_tr = perm[:int(K.shape[0]*0.8)]
+    #         perm_te = perm[int(K.shape[0]*0.8):]
+    #         Y_CV_tr = Ytr[perm_tr]
+    #         Y_CV_te = Ytr[perm_te]
+    #         hists_CV_tr = hists[perm_tr,:]
+    #         hists_CV_te = hists[perm_te,:]
+    #         np.savetxt("hists_CV_te.csv", hists_CV_te, delimiter=',') 
+    #         K_CV_tr = K[perm_tr,:]
+    #         K_CV_tr = K_CV_tr[:,perm_tr]
 
-            # # train our SVM
-            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
-            # print(Y_CV_pred)
+    #         # train our SVM
+    #         C = 100
+    #         CV_predictors = SVM_ovo_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+    #         Y_CV_pred = SVM_ovo_predict(hists_CV_te, CV_predictors)
 
-            # train scikit SVM
-            clf = svm.SVC(kernel='precomputed', C=C)
-            clf.fit(K_CV_tr, Y_CV_tr)
-            K_CV_te = K[perm_te,:]
-            K_CV_te = K_CV_te[:,perm_tr]
-            Y_CV_pred = clf.predict(K_CV_te)
+    # print("%0.2f\t%d"%(C, error(Y_CV_pred, Y_CV_te)))
+    # print("Scikit SVM : ")
+    # # train scikit SVM
+    # clf = svm.SVC(kernel='precomputed', C=C)
+    # clf.fit(K_CV_tr, Y_CV_tr)
+    # K_CV_te = K[perm_te,:]
+    # K_CV_te = K_CV_te[:,perm_tr]
+    # Y_CV_pred = clf.predict(K_CV_te)
 
-            print("%0.2f\t%d"%(C, error(Y_CV_pred, Y_CV_te)))
+    # print("%0.2f\t%d"%(C, error(Y_CV_pred, Y_CV_te)))
 
-    # # final prediction
-    # C = 10
-    # predictors = SVM_ova_predictors(K, Ytr, C, hists)
-    # hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
-    # hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
-    # hists_te = np.hstack((hists_patch_te, hists_HOG_te))
-    # Yte = SVM_ova_predict(hists_te, predictors)
+    # final prediction
+    C = 100
+    predictors = SVM_ovo_predictors(K, Ytr, C, hists)
+    hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
+    hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
+    hists_te = np.hstack((hists_patch_te, hists_HOG_te))
+    Yte = SVM_ovo_predict(hists_te, predictors)
+    save_submit(Yte)
 
-
+    
