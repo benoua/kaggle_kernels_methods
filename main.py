@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import logging
 import cvxopt
 from sklearn import svm
+import pdb
 
 ################################################################################
 
@@ -302,15 +303,47 @@ def patch_hists(X, dic, patch_width):
 
     return hists
 
-################################################################################
 
-def patch_Gram(X, dic, hists):
+################################################################################
+'''
+    Kernels of interests
+'''
+
+def rbf_kernel(X1, X2, gamma = None):
+    n1 = X1.shape[0]
+    n2 = X2.shape[0]
+    K = np.empty((n1, n2))
+    if gamma is None: 
+        gamma = 1. / np.sqrt(n1*n2)
+
+    for i in range(n1):
+        for j in range(n2):
+            K[i, j] = np.exp(-gamma * np.linalg.norm(X1[i] - X2[j]))  
+    return K
+
+
+def poly_kernel (X1, X2, degree = 3):
+    n1 = X1.shape[0]
+    n2 = X2.shape[0]
+    K = np.empty((n1, n2))
+
+    for i in range(n1):
+        for j in range(n2):
+            K[i, j] = (1 + np.dot(X1[i], X2[j] )) ** int(degree)
+    return K
+
+##################################################################################
+
+def patch_Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
     """
         Generate the Gram matrix corresponding to the patch feature.
 
         Arguments:
             - X : dataset
-            - dic : dictionnary of all words
+            - hists : histogramme of the image among patches
+            - kernel : type of kernel used (linear, poly or rbf)
+            - degree : degree for polynomial kernel
+            - gamma: parameter for rbf kernel
 
         Returns:
             - K : Gram matrix
@@ -319,7 +352,12 @@ def patch_Gram(X, dic, hists):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
     # define path
-    gram_path = "gram_patch.csv"
+    if kernel == 'linear':
+        gram_path = "gram_patch_" + kernel +".csv"
+    elif kernel == 'poly':
+        gram_path = "gram_patch_" + kernel +"_degree_"+ str(degree)+ ".csv"
+    elif kernel =='rbf':
+        gram_path = "gram_patch_" + kernel +"_gamma_"+ str(gamma) +".csv"
 
     # check if it already exists
     if os.path.isfile(gram_path):
@@ -328,7 +366,12 @@ def patch_Gram(X, dic, hists):
         logging.info("Gram matrix loaded from file")
     else:
         # compute the Gram matrix
-        K = hists.dot(hists.T)
+        if kernel == 'linear':
+            K = hists.dot(hists.T)
+        elif kernel == 'poly':
+            K = poly_kernel(hists, hists, degree)
+        elif kernel == 'rbf': 
+            K = rbf_kernel(hists, hists, gamma)            
 
         # save the matrix
         np.savetxt(gram_path, K, delimiter=',')
@@ -337,6 +380,7 @@ def patch_Gram(X, dic, hists):
     return K
 
 ################################################################################
+
 
 def SVM_kernel(K, Y, C, hists):
     """
@@ -841,7 +885,8 @@ if __name__ == "__main__":
     hists = HOG_hists(Xtr, dic_HOG, n_bins)
 
     # generate the Gram matrix
-    K = hists.dot(hists.T)
+    # K = hists.dot(hists.T)
+    K = patch_Gram(Xtr, hists, kernel = 'linear', degree = 3, gamma = None)
 
     # find best C
     for C in 0.1*2**np.arange(0,15):
