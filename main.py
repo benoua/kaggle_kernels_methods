@@ -591,14 +591,13 @@ def SVM_ovo_predict(hists, predictors):
             - Ypred : predicted data labels
     """
     # retrieve dimensions
-    N = 10 #int(np.sqrt(2 * predictors.shape[0] + 1./4) - 1./2)
+    N = 1. / 2 + np.sqrt(2 * predictors.shape[0] + 1./4)
     n = hists.shape[0]
 
     # loop through all images
     Ypred = np.zeros(n)
     for l in range(0,n):
         # build histogram
-
         hist = hists[l]
 
         # initialize variables
