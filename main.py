@@ -579,29 +579,27 @@ def SVM_ova_predictors(K, Y, C, hists):
 
 ################################################################################
 
-def SVM_ovo_predict(X, predictors, dic, patch_width):
+def SVM_ovo_predict(hists, predictors):
     """
         Predict the label using a predictor
 
         Arguments:
-            - X : dataset
             - predictors : predictor of each SVM
-            - dic : dictionnary of all words
-            - width : width of the patch
+            - hists : histogram of the data to predict
 
         Returns:
             - Ypred : predicted data labels
     """
     # retrieve dimensions
-    N = int(np.sqrt(2 * predictors.shape[0] + 1./4) - 1./2)
-    n = X.shape[0]
+    N = 10 #int(np.sqrt(2 * predictors.shape[0] + 1./4) - 1./2)
+    n = hists.shape[0]
 
     # loop through all images
     Ypred = np.zeros(n)
     for l in range(0,n):
         # build histogram
-        im = build_image(X[l,:])
-        hist = patch_hist(im, dic, patch_width)
+
+        hist = hists[l]
 
         # initialize variables
         votes = np.zeros((N,N))
@@ -616,13 +614,17 @@ def SVM_ovo_predict(X, predictors, dic, patch_width):
 
                 # update vote
                 score = w.dot(hist) + rho
-                votes[i,j] = score
-                votes[j,i] = -score
+                if score > 0:
+                    votes[i,j] = 1
+                if score < 0:
+                    votes[j,i] = 1
 
                 # update iterator
                 k = k + 1
-
-        Ypred[l] = np.sign(votes).sum(axis=0).argmax()
+        # classe to win has the most votes
+        winners = np.argwhere(votes.sum(axis=1) == np.amax(votes.sum(axis=1))).flatten()
+        # choosing randomly the final winner between all winning classes
+        Ypred[l] = np.random.choice(winners)
 
     return Ypred
 
