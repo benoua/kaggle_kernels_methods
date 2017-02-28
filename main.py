@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import logging
 import cvxopt
 from sklearn import svm
+import sys
 import pdb
 
 ################################################################################
@@ -303,33 +304,56 @@ def patch_hists(X, dic, patch_width):
 
     return hists
 
-
 ################################################################################
-'''
-    Kernels of interests
-'''
 
 def rbf_kernel(X1, X2, gamma = None):
+    """
+        Compute the rbf kernel of vectors X1 and X2.
+
+        Arguments:
+            - X1 : first input vector
+            - X2 : second input vector
+            - gamma : scaling parameter
+
+        Returns:
+            - K : Gram matrix
+    """
+    # initialize variables
     n1 = X1.shape[0]
     n2 = X2.shape[0]
     K = np.empty((n1, n2))
-    if gamma is None: 
-        gamma = 1. / np.sqrt(n1*n2)
+    gamma = 1. / np.sqrt(n1*n2) if gamma is None else gamma
 
+    # compute the Gram matrix
     for i in range(n1):
         for j in range(n2):
-            K[i, j] = np.exp(-gamma * np.linalg.norm(X1[i] - X2[j]))  
+            K[i, j] = np.exp(-gamma * np.linalg.norm(X1[i] - X2[j]))
     return K
 
+################################################################################
 
 def poly_kernel (X1, X2, degree = 3):
+    """
+        Compute the polynomial kernel of vectors X1 and X2.
+
+        Arguments:
+            - X1 : first input vector
+            - X2 : second input vector
+            - degree : polynomial degree
+
+        Returns:
+            - K : Gram matrix
+    """
+    # initialize variables
     n1 = X1.shape[0]
     n2 = X2.shape[0]
     K = np.empty((n1, n2))
 
+    # compute the Gram matrix
     for i in range(n1):
         for j in range(n2):
             K[i, j] = (1 + np.dot(X1[i], X2[j] )) ** int(degree)
+
     return K
 
 ##################################################################################
@@ -353,11 +377,14 @@ def patch_Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
 
     # define path
     if kernel == 'linear':
-        gram_path = "gram_patch_" + kernel +".csv"
+        gram_path = "gram_linear.csv"
     elif kernel == 'poly':
-        gram_path = "gram_patch_" + kernel +"_degree_"+ str(degree)+ ".csv"
+        gram_path = "gram_poly_degree_%d.csv" % degree
     elif kernel =='rbf':
-        gram_path = "gram_patch_" + kernel +"_gamma_"+ str(gamma) +".csv"
+        gram_path = "gram_rbf_gamma_%0.3f.csv" % gamma
+    else:
+        print('kernel name \'%s\' not defined. Script aborted.'%kernel)
+        sys.exit(1)
 
     # check if it already exists
     if os.path.isfile(gram_path):
@@ -370,8 +397,8 @@ def patch_Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
             K = hists.dot(hists.T)
         elif kernel == 'poly':
             K = poly_kernel(hists, hists, degree)
-        elif kernel == 'rbf': 
-            K = rbf_kernel(hists, hists, gamma)            
+        elif kernel == 'rbf':
+            K = rbf_kernel(hists, hists, gamma)
 
         # save the matrix
         np.savetxt(gram_path, K, delimiter=',')
@@ -380,7 +407,6 @@ def patch_Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
     return K
 
 ################################################################################
-
 
 def SVM_kernel(K, Y, C, hists):
     """
@@ -441,9 +467,10 @@ def SVM_kernel(K, Y, C, hists):
     # compute the intercept
     svp = np.where((alpha<(0.99*C))*(alpha>(0.01*C)))[0]
     svn = np.where((alpha>(-0.99*C))*(alpha<(-0.01*C)))[0]
-    rhop = 1 - K.dot(alpha)[svp].mean()
-    rhon = - 1 - K.dot(alpha)[svn].mean()
-    rho = 0.5 * (rhop + rhon)
+    rhop = 1 - K.dot(alpha)[svp].mean() if svp.size > 0 else np.nan
+    rhon = - 1 - K.dot(alpha)[svn].mean() if svn.size > 0 else np.nan
+    rho = np.array([rhop, rhon])
+    rho = rho[np.isfinite(rho)].mean()
 
     # compute the representation
     w = alpha.reshape(1,n).dot(hists).flatten()
@@ -693,7 +720,6 @@ def HOG_features(im, n_bins):
             - feat : feature descriptor of the image
     """
     # initialize variables
-
     qudrnt = 360. / n_bins
     n_block = (im.shape[0] / 4 - 1) * (im.shape[1] / 4 - 1)
     feat = np.zeros((n_block, n_bins))
@@ -878,50 +904,54 @@ if __name__ == "__main__":
     dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
 
     # generate histograms list
-    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
-    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
-    # hists = np.hstack((hists_patch, hists_HOG))
-
-    hists = HOG_hists(Xtr, dic_HOG, n_bins)
+    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+    hists = np.hstack((hists_patch, hists_HOG))
 
     # generate the Gram matrix
     # K = hists.dot(hists.T)
-    K = patch_Gram(Xtr, hists, kernel = 'linear', degree = 3, gamma = None)
+    K = patch_Gram(Xtr, hists, kernel = 'rbf', degree = 3, gamma = 1)
 
-    # find best C
-    for C in 0.1*2**np.arange(0,15):
-        for i in range(0,10):
-            # split the data
-            perm = np.random.permutation(K.shape[0])
-            perm_tr = perm[:int(K.shape[0]*0.8)]
-            perm_te = perm[int(K.shape[0]*0.8):]
-            Y_CV_tr = Ytr[perm_tr]
-            Y_CV_te = Ytr[perm_te]
-            hists_CV_tr = hists[perm_tr,:]
-            hists_CV_te = hists[perm_te,:]
-            K_CV_tr = K[perm_tr,:]
-            K_CV_tr = K_CV_tr[:,perm_tr]
+    # # find best C
+    # for C in 0.1*2**np.arange(0,15):
+    #     err = 0
+    #     for i in range(0,10):
+    #         # split the data
+    #         perm = np.random.permutation(K.shape[0])
+    #         perm_tr = perm[:int(K.shape[0]*0.8)]
+    #         perm_te = perm[int(K.shape[0]*0.8):]
+    #         Y_CV_tr = Ytr[perm_tr]
+    #         Y_CV_te = Ytr[perm_te]
+    #         hists_CV_tr = hists[perm_tr,:]
+    #         hists_CV_te = hists[perm_te,:]
+    #         K_CV_tr = K[perm_tr,:]
+    #         K_CV_tr = K_CV_tr[:,perm_tr]
 
-            # # train our SVM
-            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
-            # print(Y_CV_pred)
+    #         # # train our SVM
+    #         # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+    #         # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+    #         # print(Y_CV_pred)
 
-            # train scikit SVM
-            clf = svm.SVC(kernel='precomputed', C=C)
-            clf.fit(K_CV_tr, Y_CV_tr)
-            K_CV_te = K[perm_te,:]
-            K_CV_te = K_CV_te[:,perm_tr]
-            Y_CV_pred = clf.predict(K_CV_te)
+    #         # train scikit SVM
+    #         clf = svm.SVC(kernel='precomputed', C=C)
+    #         clf.fit(K_CV_tr, Y_CV_tr)
+    #         K_CV_te = K[perm_te,:]
+    #         K_CV_te = K_CV_te[:,perm_tr]
+    #         Y_CV_pred = clf.predict(K_CV_te)
 
-            print("%0.2f\t%d"%(C, error(Y_CV_pred, Y_CV_te)))
+    #         err += error(Y_CV_pred, Y_CV_te)
 
-    # # final prediction
-    # C = 10
-    # predictors = SVM_ova_predictors(K, Ytr, C, hists)
-    # hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
-    # hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
-    # hists_te = np.hstack((hists_patch_te, hists_HOG_te))
-    # Yte = SVM_ova_predict(hists_te, predictors)
+    #     print("%0.2f\t%d"%(C, err/10))
+
+    # final prediction
+    C = 50
+    predictors = SVM_ova_predictors(K, Ytr, C, hists)
+    hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
+    hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
+    hists_te = np.hstack((hists_patch_te, hists_HOG_te))
+    Yte = SVM_ova_predict(hists_te, predictors)
+    save_submit(Yte)
+
+    pdb.set_trace()
 
 
