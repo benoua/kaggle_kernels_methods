@@ -726,7 +726,7 @@ def HOG_features(im, n_bins):
     feat = np.zeros((n_block, n_bins))
 
     # convert RGB 2 gray image
-    im_gray = im
+    im_gray = raw2gray(im)
 
     # compute gradient and store it as complex
     grad = np.zeros(im_gray.shape).astype(np.complex)
@@ -790,18 +790,16 @@ def HOG_list(X, n_bins):
     # initialize the list of words
     n_block = (32 / 4 - 1) * (32 / 4 - 1)
     n_words = X.shape[0] * n_block
-    words = np.zeros((n_words, 3 * n_bins))
+    words = np.zeros((n_words, n_bins))
 
     # go through all image
     for i in range(0, X.shape[0]):
         # extract features
         im = build_image(X[i,:])
-        feat1 = HOG_features(im[:,:,0], n_bins)
-        feat2 = HOG_features(im[:,:,1], n_bins)
-        feat3 = HOG_features(im[:,:,2], n_bins)
+        feat = HOG_features(im, n_bins)
 
         # add them to the list
-        words[i*n_block:(i+1)*n_block,:] = np.hstack((feat1, feat2, feat3))
+        words[i*n_block:(i+1)*n_block,:] = feat
 
     return words
 
@@ -855,10 +853,7 @@ def HOG_hist(im, dic, n_bins):
             - hist : HOG histogram
     """
     # retrieve the features
-    feat1 = HOG_features(im[:,:,0], n_bins)
-    feat2 = HOG_features(im[:,:,1], n_bins)
-    feat3 = HOG_features(im[:,:,2], n_bins)
-    feat = np.hstack((feat1, feat2, feat3))
+    feat = HOG_features(im, n_bins)
 
     # compute the histogram
     hist = np.zeros(dic.shape[0])
