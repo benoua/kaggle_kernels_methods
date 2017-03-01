@@ -358,7 +358,7 @@ def poly_kernel (X1, X2, degree = 3):
 
 ##################################################################################
 
-def patch_Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
+def Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
     """
         Generate the Gram matrix corresponding to the patch feature.
 
@@ -726,7 +726,6 @@ def HOG_features(im, n_bins):
     feat = np.zeros((n_block, n_bins))
 
     # convert RGB 2 gray image
-    # im_gray = raw2gray(im)
     im_gray = im
 
     # compute gradient and store it as complex
@@ -747,8 +746,8 @@ def HOG_features(im, n_bins):
     bin_bot = np.floor(angle / qudrnt)
 
     # compute proportial magnitude
-    magn_top = magn * (bin_top * qudrnt - angle) / qudrnt
-    magn_bot = magn * (angle - bin_bot * qudrnt) / qudrnt
+    magn_bot = magn * (bin_top * qudrnt - angle) / qudrnt
+    magn_top = magn * (angle - bin_bot * qudrnt) / qudrnt
 
     l = 0
     for i in range(0,im.shape[0] / 4 - 1):
@@ -791,16 +790,18 @@ def HOG_list(X, n_bins):
     # initialize the list of words
     n_block = (32 / 4 - 1) * (32 / 4 - 1)
     n_words = X.shape[0] * n_block
-    words = np.zeros((n_words, n_bins))
+    words = np.zeros((n_words, 3 * n_bins))
 
     # go through all image
     for i in range(0, X.shape[0]):
         # extract features
         im = build_image(X[i,:])
-        feat = HOG_features(im, n_bins)
+        feat1 = HOG_features(im[:,:,0], n_bins)
+        feat2 = HOG_features(im[:,:,1], n_bins)
+        feat3 = HOG_features(im[:,:,2], n_bins)
 
         # add them to the list
-        words[i*n_block:(i+1)*n_block,:] = feat
+        words[i*n_block:(i+1)*n_block,:] = np.hstack((feat1, feat2, feat3))
 
     return words
 
@@ -854,7 +855,10 @@ def HOG_hist(im, dic, n_bins):
             - hist : HOG histogram
     """
     # retrieve the features
-    feat = HOG_features(im, n_bins)
+    feat1 = HOG_features(im[:,:,0], n_bins)
+    feat2 = HOG_features(im[:,:,1], n_bins)
+    feat3 = HOG_features(im[:,:,2], n_bins)
+    feat = np.hstack((feat1, feat2, feat3))
 
     # compute the histogram
     hist = np.zeros(dic.shape[0])
@@ -911,41 +915,47 @@ if __name__ == "__main__":
 
     # generate the Gram matrix
     # K = hists.dot(hists.T)
-    K = patch_Gram(Xtr, hists, kernel = 'rbf', degree = 3, gamma = 1)
+    K = Gram(Xtr, hists, kernel = 'rbf', degree = 3, gamma = 1)
 
-    # # find best C
-    # for C in 0.1*2**np.arange(0,15):
-    #     err = 0
-    #     for i in range(0,10):
-    #         # split the data
-    #         perm = np.random.permutation(K.shape[0])
-    #         perm_tr = perm[:int(K.shape[0]*0.8)]
-    #         perm_te = perm[int(K.shape[0]*0.8):]
-    #         Y_CV_tr = Ytr[perm_tr]
-    #         Y_CV_te = Ytr[perm_te]
-    #         hists_CV_tr = hists[perm_tr,:]
-    #         hists_CV_te = hists[perm_te,:]
-    #         K_CV_tr = K[perm_tr,:]
-    #         K_CV_tr = K_CV_tr[:,perm_tr]
+    # find best C
+    n = 10
+    best_C = None
+    print("C\tError")
+    for C in 0.01*2**np.arange(0,15):
+        err = 0
+        for i in range(0,n):
+            # split the data
+            perm = np.random.permutation(K.shape[0])
+            perm_tr = perm[:int(K.shape[0]*0.8)]
+            perm_te = perm[int(K.shape[0]*0.8):]
+            Y_CV_tr = Ytr[perm_tr]
+            Y_CV_te = Ytr[perm_te]
+            hists_CV_tr = hists[perm_tr,:]
+            hists_CV_te = hists[perm_te,:]
+            K_CV_tr = K[perm_tr,:]
+            K_CV_tr = K_CV_tr[:,perm_tr]
 
-    #         # # train our SVM
-    #         # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-    #         # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
-    #         # print(Y_CV_pred)
+            # # train our SVM
+            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
 
-    #         # train scikit SVM
-    #         clf = svm.SVC(kernel='precomputed', C=C)
-    #         clf.fit(K_CV_tr, Y_CV_tr)
-    #         K_CV_te = K[perm_te,:]
-    #         K_CV_te = K_CV_te[:,perm_tr]
-    #         Y_CV_pred = clf.predict(K_CV_te)
+            # train scikit SVM
+            clf = svm.SVC(kernel='precomputed', C=C)
+            clf.fit(K_CV_tr, Y_CV_tr)
+            K_CV_te = K[perm_te,:]
+            K_CV_te = K_CV_te[:,perm_tr]
+            Y_CV_pred = clf.predict(K_CV_te)
 
-    #         err += error(Y_CV_pred, Y_CV_te)
-
-    #     print("%0.2f\t%d"%(C, err/10))
+            err += error(Y_CV_pred, Y_CV_te)
+        err = err / n
+        print("%0.2f\t%d"%(C, err))
+        if best_C is None or err < best_err:
+            best_err = err
+            best_C = C
+    print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
 
     # final prediction
-    C = 50
+    C = best_C
     predictors = SVM_ova_predictors(K, Ytr, C, hists)
     hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
     hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
@@ -954,5 +964,6 @@ if __name__ == "__main__":
     save_submit(Yte)
 
     pdb.set_trace()
+
 
 
