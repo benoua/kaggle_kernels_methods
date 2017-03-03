@@ -940,12 +940,12 @@ def compute_gamma(X, weights, means, covariances):
     k = len(weights)
     n = X.shape[0]
     p = X.shape[1]
-    gamma = np.zeros((n, p))
+    gamma = np.zeros((n, k))
     
     for i in range(n):
-        for j in range(p):
+        for j in range(k):
             gamma[i,j] = weights[j] * multivariate_normal.pdf(X[i,:], means[j], covariances[j]) / \
-            sum([multivariate_normal.pdf(X[i,:], means[l], covariances[l]) for l in range(p)])
+            sum([multivariate_normal.pdf(X[i,:], means[l], covariances[l]) for l in range(k)])
     return gamma
 
 
@@ -968,12 +968,12 @@ def compute_statistics (X, weights, means, covariances):
     k = len(weights)
     n = X.shape[0]
     p = X.shape[1]
-    phi_mu = np.zeros((p, k))
-    phi_sigma = np.zeros((p, k))
+    phi_mu = np.zeros((k, p))
+    phi_sigma = np.zeros((k, p))
     gamma = compute_gamma(X, weights, means, covariances)
 
 
-    for j in range(p):
+    for j in range(k):
         phi_mu_j = 1/(n * np.sqrt(weights[j])) * \
         np.sum([gamma[i,j]* \
                 (X[i] - means[j]) / covariances[j] \
@@ -1069,7 +1069,7 @@ if __name__ == "__main__":
     X = np.concatenate([np.random.randn(100, 10) + centers[1, :] for i in range(20)])
 
 
-    weights, means, covariances = GaussianMixture_kernel (X, k=10)
+    weights, means, covariances = GaussianMixture_kernel (X, k=8)
 
     phi_mu, phi_sigma = compute_statistics (X, weights, means, covariances)
     print (phi_mu, phi_sigma)
