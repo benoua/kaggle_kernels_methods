@@ -8,6 +8,8 @@ import cvxopt
 from sklearn import svm
 import sys
 import pdb
+from sklearn import preprocessing
+
 
 ################################################################################
 
@@ -921,6 +923,8 @@ def GaussianMixture_kernel (X, k=100):
 
     return g.weights_, g.means_, g.covars_
 
+from scipy.misc import logsumexp
+
 def compute_gamma(X, weights, means, covariances):
     """
         Compute matrice gamma. gamma[i,j] can be interpreted as the
@@ -943,9 +947,11 @@ def compute_gamma(X, weights, means, covariances):
     gamma = np.zeros((n, k))
     
     for i in range(n):
+    	log_denominateur = logsumexp([multivariate_normal.logpdf(X[i,:], means[l], covariances[l]) for l in range(k)])
+    	print('log denominateur : %d' %log_denominateur)
         for j in range(k):
-            gamma[i,j] = weights[j] * multivariate_normal.pdf(X[i,:], means[j], covariances[j]) / \
-            sum([multivariate_normal.pdf(X[i,:], means[l], covariances[l]) for l in range(k)])
+            log_gamma = np.log(weights[j])  + multivariate_normal.logpdf(X[i,:], means[j], covariances[j]) - log_denominateur
+            gamma[i,j] = np.exp(log_gamma)
     return gamma
 
 
@@ -978,7 +984,6 @@ def compute_statistics (X, weights, means, covariances):
         np.sum([gamma[i,j]* \
                 (X[i] - means[j]) / covariances[j] \
                 for i in range(n) ], axis = 0)
-        print(phi_mu_j.shape)
         phi_mu[j,:] = phi_mu_j
             
             
@@ -986,18 +991,23 @@ def compute_statistics (X, weights, means, covariances):
         np.sum([gamma[i,j]* \
                 ((X[i] - means[j])**2 / covariances[j]**2 -1)  \
                 for i in range(n) ], axis = 0)
-        print(phi_sigma_j.shape)
         phi_sigma[j,:] = phi_sigma_j
 
-    return phi_mu, phi_sigma
+    phi_final = np.concatenate((phi_mu, phi_sigma), axis = 1)
+
+    return phi_final
 
 ################################################################################
 
 
 if __name__ == "__main__":
     # load the data
-    # Xtr, Ytr, Xte = load_data()
+    Xtr, Ytr, Xte = load_data()
+    print(Xtr.shape)
     
+    scaler = preprocessing.StandardScaler().fit(Xtr)
+    Xtr_transformed = scaler.transform(Xtr)
+    Xte_transformed = scaler.transform(Xte)
 
     # # build the dictionnary
     # n_voc = 1000
@@ -1065,12 +1075,16 @@ if __name__ == "__main__":
 
 
 
-    centers = np.random.rand(20, 10)*10
-    X = np.concatenate([np.random.randn(100, 10) + centers[1, :] for i in range(20)])
+    # centers = np.random.rand(20, 10)*10
+    # X_train = np.concatenate([np.random.randn(100, 10) + centers[1, :] for i in range(20)])
 
+    # X_test = np.concatenate([np.random.randn(20, 10) + centers[1, :] for i in range(20)])
 
-    weights, means, covariances = GaussianMixture_kernel (X, k=8)
+    weights, means, covariances = GaussianMixture_kernel (Xtr_transformed, k=10)
+    print (weights)
 
-    phi_mu, phi_sigma = compute_statistics (X, weights, means, covariances)
-    print (phi_mu, phi_sigma)
-    print (phi_mu.shape, phi_sigma.shape)
+    hists_GMM_train = compute_statistics (Xtr_transformed, weights, means, covariances)
+    # hists_GMM_test = compute_statistics (Xte_transformed, weights, means, covariances)
+
+    # logging.info("Train size %s"%hists_GMM_train.shape)
+    # logging.info("Test size %s"%hists_GMM_test.shape)
