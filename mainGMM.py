@@ -13,7 +13,7 @@ from sklearn import preprocessing
 
 ################################################################################
 
-def load_data():
+def load_data(max_rows = 5000):
     """
         Load the data from the data directory.
 
@@ -31,14 +31,15 @@ def load_data():
     Ytr_path = os.path.join(os.getcwd(), "Data", "Ytr.csv")
 
     # load the data
-    Xtr = np.genfromtxt(Xtr_path, delimiter=',')
-    Xte = np.genfromtxt(Xte_path, delimiter=',')
+    Xtr = np.genfromtxt(Xtr_path, delimiter=',', max_rows = max_rows)
+    Xte = np.genfromtxt(Xte_path, delimiter=',', max_rows = max_rows)
     Ytr = np.loadtxt(Ytr_path, delimiter=',', skiprows=1)
 
     # trim the useless data
     Xtr = Xtr[:,0:3072]
     Xte = Xte[:,0:3072]
     Ytr = Ytr[:,1].astype(np.double)
+    Ytr = Ytr[:max_rows]
     logging.info("%d images loaded from file"%Xtr.shape[0])
 
     return Xtr, Ytr, Xte
@@ -728,7 +729,7 @@ def HOG_features(im, n_bins):
     feat = np.zeros((n_block, n_bins))
 
     # convert RGB 2 gray image
-    im_gray = raw2gray(im)
+    im_gray = im
 
     # compute gradient and store it as complex
     grad = np.zeros(im_gray.shape).astype(np.complex)
@@ -792,16 +793,18 @@ def HOG_list(X, n_bins):
     # initialize the list of words
     n_block = (32 / 4 - 1) * (32 / 4 - 1)
     n_words = X.shape[0] * n_block
-    words = np.zeros((n_words, n_bins))
+    words = np.zeros((n_words, 3 * n_bins))
 
     # go through all image
     for i in range(0, X.shape[0]):
         # extract features
         im = build_image(X[i,:])
-        feat = HOG_features(im, n_bins)
+        feat1 = HOG_features(im[:,:,0], n_bins)
+        feat2 = HOG_features(im[:,:,1], n_bins)
+        feat3 = HOG_features(im[:,:,2], n_bins)
 
         # add them to the list
-        words[i*n_block:(i+1)*n_block,:] = feat
+        words[i*n_block:(i+1)*n_block,:] = np.hstack((feat1, feat2, feat3))
 
     return words
 
@@ -855,7 +858,10 @@ def HOG_hist(im, dic, n_bins):
             - hist : HOG histogram
     """
     # retrieve the features
-    feat = HOG_features(im, n_bins)
+    feat1 = HOG_features(im[:,:,0], n_bins)
+    feat2 = HOG_features(im[:,:,1], n_bins)
+    feat3 = HOG_features(im[:,:,2], n_bins)
+    feat = np.hstack((feat1, feat2, feat3))
 
     # compute the histogram
     hist = np.zeros(dic.shape[0])
@@ -915,6 +921,7 @@ def GaussianMixture_kernel (X, k=100):
     '''
     g = GMM(n_components=k, covariance_type='spherical')
     g.fit(X)
+    logging.info("GMM trained")
 
     return g.weights_, g.means_, g.covars_
 
@@ -926,7 +933,7 @@ def compute_gamma(X, weights, means, covariances):
         soft assignement of word i to component j 
 
         Arguments : 
-            - X : dataset
+            - X : list of patches for one or all examples 
             - weights : array of weights of each mixture components
             - means : array of means of each mixture components
             - covariances : array of covariance types 
@@ -942,11 +949,14 @@ def compute_gamma(X, weights, means, covariances):
     gamma = np.zeros((n, k))
     
     for i in range(n):
-    	log_denominateur = logsumexp([multivariate_normal.logpdf(X[i,:], means[l], covariances[l]) for l in range(k)])
-    	print('log denominateur : %d' %log_denominateur)
+        log_denominateur = logsumexp([multivariate_normal.logpdf(X[i,:], means[l], covariances[l]) for l in range(k)])
+        # print('log denominateur : %d over %d' %(i, n))
         for j in range(k):
             log_gamma = np.log(weights[j])  + multivariate_normal.logpdf(X[i,:], means[j], covariances[j]) - log_denominateur
             gamma[i,j] = np.exp(log_gamma)
+        if i%64 == 0:
+        	logging.info("Gamma computed for %d on %d Images" %(i/64,n/64))
+    logging.info("Gamma - soft assignement computed")
     return gamma
 
 
@@ -955,7 +965,7 @@ def compute_statistics (X, weights, means, covariances):
         Compute the statistics of the generative model
 
         Arguments : 
-            - X dataset
+            - X : list of patch of size n * 64 
             - weights : array of weights of each mixture components
             - means : array of means of each mixture components
             - covariances : array of covariance types 
@@ -967,27 +977,43 @@ def compute_statistics (X, weights, means, covariances):
     """
 
     k = len(weights)
-    n = X.shape[0]
+    n = X.shape[0] / 64 #nb d'images
     p = X.shape[1]
-    phi_mu = np.zeros((k, p))
-    phi_sigma = np.zeros((k, p))
+    phi_mu = np.zeros((n, k, p))
+    phi_sigma = np.zeros((n, k, p))
+    
     gamma = compute_gamma(X, weights, means, covariances)
+    logging.info("Shape of gamma : {0} " .format(gamma.shape))
 
+    for s in range(n):
+        gamma_s = gamma[s*64:(s+1)*64,:]
+        X_s = X[s*64:(s+1)*64,:]
+        logging.info("Descriptors Phi for %d on %d Images" %(s,n))
 
-    for j in range(k):
-        phi_mu_j = 1/(n * np.sqrt(weights[j])) * \
-        np.sum([gamma[i,j]* \
-                (X[i] - means[j]) / covariances[j] \
-                for i in range(n) ], axis = 0)
-        phi_mu[j,:] = phi_mu_j
+        for j in range(k):
+            coeff_j = 1/(n * np.sqrt(weights[j])) 
             
-            
-        phi_sigma_j = 1/(n * np.sqrt(2*weights[j])) * \
-        np.sum([gamma[i,j]* \
-                ((X[i] - means[j])**2 / covariances[j]**2 -1)  \
-                for i in range(n) ], axis = 0)
-        phi_sigma[j,:] = phi_sigma_j
+            # mu
+            delta = (X_s - means[j]) / covariances[j]
+            delta = (delta.T * (gamma_s[:,j].flatten())).T
 
+            phi_mu[s,j,:] = delta.sum(axis = 0) * coeff_j
+
+            # Sigma  
+            delta2 = ((X_s - means[j])**2 / covariances[j]**2 -1 )
+            delta2 = (delta2.T * (gamma_s[:,j].flatten())).T
+            phi_sigma[s,j,:] = delta2.sum(axis = 0) * coeff_j / np.sqrt(2) 
+                
+            # phi_sigma_j = 1/(n * np.sqrt(2*weights[j])) * \
+            # np.sum([gamma_s[i,j]* \
+            #         ((X[s*64+i] - means[j])**2 / covariances[j]**2 -1)  \
+            #         for i in range(64) ], axis = 0)
+            # phi_sigma[s,j,:] = phi_sigma_j
+        # pdb.set_trace()
+
+    phi_mu = phi_mu.reshape((n, p * k))
+    phi_sigma = phi_sigma.reshape((n, p * k))
+    # pdb.set_trace()
     phi_final = np.concatenate((phi_mu, phi_sigma), axis = 1)
 
     return phi_final
@@ -996,66 +1022,90 @@ def compute_statistics (X, weights, means, covariances):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
     # load the data
-    Xtr, Ytr, Xte = load_data()
-    print(Xtr.shape)
-    
-    scaler = preprocessing.StandardScaler().fit(Xtr)
-    Xtr_transformed = scaler.transform(Xtr)
-    Xte_transformed = scaler.transform(Xte)
+    Xtr, Ytr, Xte = load_data(max_rows = 1000)
+    # Xtr = np.random.rand(30, 3072)
+    # Ytr = np.random.randint(0,2, 30)
+    logging.info("Xtr size: {0}" .format(Xtr.shape))
+    logging.info("Ytr size: {0}" .format(Ytr.shape))
 
-    # # build the dictionnary
-    # n_voc = 1000
-    # n_bins = 9
-    # patch_width = 4
-    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
-    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
+    np.random.seed(1)
+    selection2 = np.where(Ytr==0)
+    selection3 = np.where(Ytr!=0)
+    Xtr = np.concatenate((Xtr[selection2][:50,:], Xtr[selection3][:50,:]))
+    Ytr = np.concatenate((Ytr[selection2][:50], np.ones(50)))
+    logging.info("Xtr size reduced {0}".format(Xtr.shape))
 
-    # # generate histograms list
-    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
-    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
-    # hists = np.hstack((hists_patch, hists_HOG))
+    # scaler = preprocessing.StandardScaler().fit(Xtr)
+    # Xtr_transformed = scaler.transform(Xtr)		
+    # Xte_transformed = scaler.transform(Xte)
 
-    # # generate the Gram matrix
-    # # K = hists.dot(hists.T)
-    # K = Gram(Xtr, hists, kernel = 'rbf', degree = 3, gamma = 1)
+    # build the dictionnary
+    n_voc = 10
+    n_bins = 9
+    patch_width = 4
+    # # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
+    # # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
 
-    # # find best C
-    # n = 10
-    # best_C = None
-    # print("C\tError")
-    # for C in 0.01*2**np.arange(0,15):
-    #     err = 0
-    #     for i in range(0,n):
-    #         # split the data
-    #         perm = np.random.permutation(K.shape[0])
-    #         perm_tr = perm[:int(K.shape[0]*0.8)]
-    #         perm_te = perm[int(K.shape[0]*0.8):]
-    #         Y_CV_tr = Ytr[perm_tr]
-    #         Y_CV_te = Ytr[perm_te]
-    #         hists_CV_tr = hists[perm_tr,:]
-    #         hists_CV_te = hists[perm_te,:]
-    #         K_CV_tr = K[perm_tr,:]
-    #         K_CV_tr = K_CV_tr[:,perm_tr]
+    # # # generate histograms list
+    # # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    # # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
-    #         # # train our SVM
-    #         # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-    #         # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+    # # print(hists_patch.shape)
 
-    #         # train scikit SVM
-    #         clf = svm.SVC(kernel='precomputed', C=C)
-    #         clf.fit(K_CV_tr, Y_CV_tr)
-    #         K_CV_te = K[perm_te,:]
-    #         K_CV_te = K_CV_te[:,perm_tr]
-    #         Y_CV_pred = clf.predict(K_CV_te)
+    # generates GMM histograms
+    list_of_words_train = patch_list(Xtr, patch_width)
+    logging.info("list of words size : {0}" .format(list_of_words_train.shape))
+    # list_of_words_test = patch_list(Xte, patch_width = 4)
+    weights, means, covariances = GaussianMixture_kernel (list_of_words_train, k=n_voc)
+    hists_GMM_train = compute_statistics (list_of_words_train, weights, means, covariances)
+    # hists_GMM_test = compute_statistics (X_test, weights, means, covariances)
+    print(hists_GMM_train.shape)
+    # hists = np.hstack((hists_patch, hists_HOG, hists_GMM_train))
+    hists = hists_GMM_train
 
-    #         err += error(Y_CV_pred, Y_CV_te)
-    #     err = err / n
-    #     print("%0.2f\t%d"%(C, err))
-    #     if best_C is None or err < best_err:
-    #         best_err = err
-    #         best_C = C
-    # print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
+    # generate the Gram matrix
+    K = hists.dot(hists.T)
+    # K = Gram(Xtr, hists, kernel = 'linear', degree = 3, gamma = 1)
+
+    # find best C
+    n = 10
+    best_C = None
+    print("C\tError")
+    for C in 0.01*2**np.arange(0,15):
+        err = 0
+        for i in range(0,n):
+            # split the data
+            perm = np.random.permutation(K.shape[0])
+            perm_tr = perm[:int(K.shape[0]*0.8)]
+            perm_te = perm[int(K.shape[0]*0.8):]
+            Y_CV_tr = Ytr[perm_tr]
+            Y_CV_te = Ytr[perm_te]
+            hists_CV_tr = hists[perm_tr,:]
+            hists_CV_te = hists[perm_te,:]
+            K_CV_tr = K[perm_tr,:]
+            K_CV_tr = K_CV_tr[:,perm_tr]
+
+            # # train our SVM
+            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+
+            # train scikit SVM
+            clf = svm.SVC(kernel='precomputed', C=C)
+            clf.fit(K_CV_tr, Y_CV_tr)
+            K_CV_te = K[perm_te,:]
+            K_CV_te = K_CV_te[:,perm_tr]
+            Y_CV_pred = clf.predict(K_CV_te)
+
+            err += error(Y_CV_pred, Y_CV_te)
+        err = err / n
+        print("%0.2f\t%d"%(C, err))
+        if best_C is None or err < best_err:
+            best_err = err
+            best_C = C
+    print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
 
     # # final prediction
     # C = best_C
@@ -1066,20 +1116,24 @@ if __name__ == "__main__":
     # Yte = SVM_ova_predict(hists_te, predictors)
     # save_submit(Yte)
 
-    # pdb.set_trace()
+
+    
+    # logging.info("Start")
+
+    # # dim = 16
+    # # centers = np.random.rand(20, dim)*10
+    # # X_train = np.concatenate([np.random.randn(100, dim) + centers[i, :] for i in range(20)])
+    # X = np.random.randn(10, 32*32*3)
+    
+
+    # logging.info("Shape of list of words : {0} " .format(list_of_words_train.shape))
+    # # X_test = np.concatenate([np.random.randn(20, dim) + centers[i, :] for i in range(20)])
+    # weights, means, covariances = GaussianMixture_kernel (list_of_words_train, k=100)
+    # hists_GMM_train = compute_statistics (list_of_words, weights, means, covariances)
+    # hists_GMM_test = compute_statistics (X_test, weights, means, covariances)
 
 
+    # print(hists_GMM_train.shape)
 
-    # centers = np.random.rand(20, 10)*10
-    # X_train = np.concatenate([np.random.randn(100, 10) + centers[1, :] for i in range(20)])
-
-    # X_test = np.concatenate([np.random.randn(20, 10) + centers[1, :] for i in range(20)])
-
-    weights, means, covariances = GaussianMixture_kernel (Xtr_transformed, k=10)
-    print (weights)
-
-    hists_GMM_train = compute_statistics (Xtr_transformed, weights, means, covariances)
-    # hists_GMM_test = compute_statistics (Xte_transformed, weights, means, covariances)
-
-    # logging.info("Train size %s"%hists_GMM_train.shape)
-    # logging.info("Test size %s"%hists_GMM_test.shape)
+    # logging.info("Train size %s"%str(hists_GMM_train.shape))
+    # logging.info("Test size %s"%str(hists_GMM_test.shape))
