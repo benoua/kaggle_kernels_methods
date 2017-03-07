@@ -908,7 +908,7 @@ def GaussianMixture_kernel (X, k=100):
     '''
         Gaussian mixture from Sklearn
 
-        Arguments: 
+        Arguments:
             - k : number of components for GMM
             - covariance type : spherical by default
             - X : dataset
@@ -916,7 +916,7 @@ def GaussianMixture_kernel (X, k=100):
         returns :
             - weights : array of weights of each mixture components
             - means : array of means of each mixture components
-            - covariances : array of covariance types 
+            - covariances : array of covariance types
 
     '''
     g = GMM(n_components=k, covariance_type='spherical')
@@ -930,33 +930,33 @@ from scipy.misc import logsumexp
 def compute_gamma(X, weights, means, covariances):
     """
         Compute matrice gamma. gamma[i,j] can be interpreted as the
-        soft assignement of word i to component j 
+        soft assignement of word i to component j
 
-        Arguments : 
-            - X : list of patches for one or all examples 
+        Arguments :
+            - X : list of patches for one or all examples
             - weights : array of weights of each mixture components
             - means : array of means of each mixture components
-            - covariances : array of covariance types 
-        
-        Return Gamma matrice of size (n,p) . 
+            - covariances : array of covariance types
+
+        Return Gamma matrice of size (n,p) .
             n = nb of samples, p nb of mixtures
 
     """
 
-    k = len(weights)
+    k = weights.shape[0]
     n = X.shape[0]
     p = X.shape[1]
     gamma = np.zeros((n, k))
-    
-    for i in range(n):
-        log_denominateur = logsumexp([multivariate_normal.logpdf(X[i,:], means[l], covariances[l]) for l in range(k)])
-        # print('log denominateur : %d over %d' %(i, n))
-        for j in range(k):
-            log_gamma = np.log(weights[j])  + multivariate_normal.logpdf(X[i,:], means[j], covariances[j]) - log_denominateur
-            gamma[i,j] = np.exp(log_gamma)
-        if i%64 == 0:
-        	logging.info("Gamma computed for %d on %d Images" %(i/64,n/64))
+
+    for i in range(0,k):
+        sig = np.diag(covariances[i])
+        mu = means[i]
+        weight = weights[i]
+        gamma[:,i] = np.log(multivariate_normal.pdf(X,mu,sig)) + np.log(weight)
+    gamma = gamma - logsumexp(gamma, axis=1).reshape(gamma.shape[0],1)
+    gamma = np.exp(gamma)
     logging.info("Gamma - soft assignement computed")
+
     return gamma
 
 
@@ -964,15 +964,15 @@ def compute_statistics (X, weights, means, covariances):
     """
         Compute the statistics of the generative model
 
-        Arguments : 
-            - X : list of patch of size n * 64 
+        Arguments :
+            - X : list of patch of size n * 64
             - weights : array of weights of each mixture components
             - means : array of means of each mixture components
-            - covariances : array of covariance types 
+            - covariances : array of covariance types
 
-        Return : 
-            - phi_mu : 
-            - phi_sigma : 
+        Return :
+            - phi_mu :
+            - phi_sigma :
 
     """
 
@@ -981,8 +981,9 @@ def compute_statistics (X, weights, means, covariances):
     p = X.shape[1]
     phi_mu = np.zeros((n, k, p))
     phi_sigma = np.zeros((n, k, p))
-    
+
     gamma = compute_gamma(X, weights, means, covariances)
+    return 0
     logging.info("Shape of gamma : {0} " .format(gamma.shape))
 
     for s in range(n):
@@ -991,19 +992,19 @@ def compute_statistics (X, weights, means, covariances):
         logging.info("Descriptors Phi for %d on %d Images" %(s,n))
 
         for j in range(k):
-            coeff_j = 1/(n * np.sqrt(weights[j])) 
-            
+            coeff_j = 1/(n * np.sqrt(weights[j]))
+
             # mu
             delta = (X_s - means[j]) / covariances[j]
             delta = (delta.T * (gamma_s[:,j].flatten())).T
 
             phi_mu[s,j,:] = delta.sum(axis = 0) * coeff_j
 
-            # Sigma  
+            # Sigma
             delta2 = ((X_s - means[j])**2 / covariances[j]**2 -1 )
             delta2 = (delta2.T * (gamma_s[:,j].flatten())).T
-            phi_sigma[s,j,:] = delta2.sum(axis = 0) * coeff_j / np.sqrt(2) 
-                
+            phi_sigma[s,j,:] = delta2.sum(axis = 0) * coeff_j / np.sqrt(2)
+
             # phi_sigma_j = 1/(n * np.sqrt(2*weights[j])) * \
             # np.sum([gamma_s[i,j]* \
             #         ((X[s*64+i] - means[j])**2 / covariances[j]**2 -1)  \
@@ -1039,7 +1040,7 @@ if __name__ == "__main__":
     logging.info("Xtr size reduced {0}".format(Xtr.shape))
 
     # scaler = preprocessing.StandardScaler().fit(Xtr)
-    # Xtr_transformed = scaler.transform(Xtr)		
+    # Xtr_transformed = scaler.transform(Xtr)
     # Xte_transformed = scaler.transform(Xte)
 
     # build the dictionnary
@@ -1064,48 +1065,48 @@ if __name__ == "__main__":
     # hists_GMM_test = compute_statistics (X_test, weights, means, covariances)
     print(hists_GMM_train.shape)
     # hists = np.hstack((hists_patch, hists_HOG, hists_GMM_train))
-    hists = hists_GMM_train
+    # hists = hists_GMM_train
 
-    # generate the Gram matrix
-    K = hists.dot(hists.T)
-    # K = Gram(Xtr, hists, kernel = 'linear', degree = 3, gamma = 1)
+    # # generate the Gram matrix
+    # K = hists.dot(hists.T)
+    # # K = Gram(Xtr, hists, kernel = 'linear', degree = 3, gamma = 1)
 
-    # find best C
-    n = 10
-    best_C = None
-    print("C\tError")
-    for C in 0.01*2**np.arange(0,15):
-        err = 0
-        for i in range(0,n):
-            # split the data
-            perm = np.random.permutation(K.shape[0])
-            perm_tr = perm[:int(K.shape[0]*0.8)]
-            perm_te = perm[int(K.shape[0]*0.8):]
-            Y_CV_tr = Ytr[perm_tr]
-            Y_CV_te = Ytr[perm_te]
-            hists_CV_tr = hists[perm_tr,:]
-            hists_CV_te = hists[perm_te,:]
-            K_CV_tr = K[perm_tr,:]
-            K_CV_tr = K_CV_tr[:,perm_tr]
+    # # find best C
+    # n = 10
+    # best_C = None
+    # print("C\tError")
+    # for C in 0.01*2**np.arange(0,15):
+    #     err = 0
+    #     for i in range(0,n):
+    #         # split the data
+    #         perm = np.random.permutation(K.shape[0])
+    #         perm_tr = perm[:int(K.shape[0]*0.8)]
+    #         perm_te = perm[int(K.shape[0]*0.8):]
+    #         Y_CV_tr = Ytr[perm_tr]
+    #         Y_CV_te = Ytr[perm_te]
+    #         hists_CV_tr = hists[perm_tr,:]
+    #         hists_CV_te = hists[perm_te,:]
+    #         K_CV_tr = K[perm_tr,:]
+    #         K_CV_tr = K_CV_tr[:,perm_tr]
 
-            # # train our SVM
-            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+    #         # # train our SVM
+    #         # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+    #         # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
 
-            # train scikit SVM
-            clf = svm.SVC(kernel='precomputed', C=C)
-            clf.fit(K_CV_tr, Y_CV_tr)
-            K_CV_te = K[perm_te,:]
-            K_CV_te = K_CV_te[:,perm_tr]
-            Y_CV_pred = clf.predict(K_CV_te)
+    #         # train scikit SVM
+    #         clf = svm.SVC(kernel='precomputed', C=C)
+    #         clf.fit(K_CV_tr, Y_CV_tr)
+    #         K_CV_te = K[perm_te,:]
+    #         K_CV_te = K_CV_te[:,perm_tr]
+    #         Y_CV_pred = clf.predict(K_CV_te)
 
-            err += error(Y_CV_pred, Y_CV_te)
-        err = err / n
-        print("%0.2f\t%d"%(C, err))
-        if best_C is None or err < best_err:
-            best_err = err
-            best_C = C
-    print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
+    #         err += error(Y_CV_pred, Y_CV_te)
+    #     err = err / n
+    #     print("%0.2f\t%d"%(C, err))
+    #     if best_C is None or err < best_err:
+    #         best_err = err
+    #         best_C = C
+    # print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
 
     # # final prediction
     # C = best_C
@@ -1117,14 +1118,14 @@ if __name__ == "__main__":
     # save_submit(Yte)
 
 
-    
+
     # logging.info("Start")
 
     # # dim = 16
     # # centers = np.random.rand(20, dim)*10
     # # X_train = np.concatenate([np.random.randn(100, dim) + centers[i, :] for i in range(20)])
     # X = np.random.randn(10, 32*32*3)
-    
+
 
     # logging.info("Shape of list of words : {0} " .format(list_of_words_train.shape))
     # # X_test = np.concatenate([np.random.randn(20, dim) + centers[i, :] for i in range(20)])
