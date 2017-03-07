@@ -5,10 +5,13 @@ import os
 import matplotlib.pyplot as plt
 import logging
 import cvxopt
-from sklearn import svm
 import sys
 import pdb
+from scipy.misc import logsumexp
+from scipy.stats import multivariate_normal
 from sklearn import preprocessing
+from sklearn import svm
+from sklearn.mixture import GMM
 
 
 ################################################################################
@@ -359,7 +362,7 @@ def poly_kernel (X1, X2, degree = 3):
 
     return K
 
-##################################################################################
+################################################################################
 
 def Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
     """
@@ -624,7 +627,8 @@ def SVM_ovo_predict(hists, predictors):
                 # update iterator
                 k = k + 1
         # classe to win has the most votes
-        winners = np.argwhere(votes.sum(axis=1) == np.amax(votes.sum(axis=1))).flatten()
+        winners = np.argwhere(votes.sum(axis=1) == \
+            np.amax(votes.sum(axis=1))).flatten()
         # choosing randomly the final winner between all winning classes
         Ypred[l] = np.random.choice(winners)
 
@@ -899,128 +903,106 @@ def HOG_hists(X, dic, n_bins):
     return hists
 
 ################################################################################
-from sklearn.mixture import GMM
-from scipy.stats import multivariate_normal
 
-
-def GaussianMixture_kernel (X, k=100):
-
-    '''
-        Gaussian mixture from Sklearn
+def GaussianMixture_kernel(X, k=100):
+    """
+        Gaussian mixture implementation
 
         Arguments:
+            - X : data input stored in row vectors
             - k : number of components for GMM
-            - covariance type : spherical by default
-            - X : dataset
 
-        returns :
-            - weights : array of weights of each mixture components
-            - means : array of means of each mixture components
-            - covariances : array of covariance types
-
-    '''
-    g = GMM(n_components=k, covariance_type='spherical')
+        Returns:
+            - weights : weights of each mixture components
+            - means : means of each mixture components
+            - covariances : covariance matricex of each components
+    """
+    g = GMM(n_components=k, covariance_type='diag')
     g.fit(X)
     logging.info("GMM trained")
 
     return g.weights_, g.means_, g.covars_
 
-from scipy.misc import logsumexp
+################################################################################
 
 def compute_gamma(X, weights, means, covariances):
     """
-        Compute matrice gamma. gamma[i,j] can be interpreted as the
-        soft assignement of word i to component j
+        Compute the soft assignment to the GMM for each row vector in X.
 
-        Arguments :
-            - X : list of patches for one or all examples
-            - weights : array of weights of each mixture components
-            - means : array of means of each mixture components
-            - covariances : array of covariance types
+        Arguments:
+            - weights : weights of each mixture components
+            - means : means of each mixture components
+            - covariances : covariance matricex of each components
 
-        Return Gamma matrice of size (n,p) .
-            n = nb of samples, p nb of mixtures
+        Returns:
+            - gamma : probability of belonging to a GMM
 
     """
-
+    # intialize variables
     k = weights.shape[0]
     n = X.shape[0]
-    p = X.shape[1]
     gamma = np.zeros((n, k))
 
+    # loop through all mixtures
     for i in range(0,k):
         sig = np.diag(covariances[i])
         mu = means[i]
         weight = weights[i]
         gamma[:,i] = np.log(multivariate_normal.pdf(X,mu,sig)) + np.log(weight)
+
+    # normalize probabilities
     gamma = gamma - logsumexp(gamma, axis=1).reshape(gamma.shape[0],1)
     gamma = np.exp(gamma)
     logging.info("Gamma - soft assignement computed")
 
     return gamma
 
-
-def compute_statistics (X, weights, means, covariances):
-    """
-        Compute the statistics of the generative model
-
-        Arguments :
-            - X : list of patch of size n * 64
-            - weights : array of weights of each mixture components
-            - means : array of means of each mixture components
-            - covariances : array of covariance types
-
-        Return :
-            - phi_mu :
-            - phi_sigma :
-
-    """
-
-    k = len(weights)
-    n = X.shape[0] / 64 #nb d'images
-    p = X.shape[1]
-    phi_mu = np.zeros((n, k, p))
-    phi_sigma = np.zeros((n, k, p))
-
-    gamma = compute_gamma(X, weights, means, covariances)
-    return 0
-    logging.info("Shape of gamma : {0} " .format(gamma.shape))
-
-    for s in range(n):
-        gamma_s = gamma[s*64:(s+1)*64,:]
-        X_s = X[s*64:(s+1)*64,:]
-        logging.info("Descriptors Phi for %d on %d Images" %(s,n))
-
-        for j in range(k):
-            coeff_j = 1/(n * np.sqrt(weights[j]))
-
-            # mu
-            delta = (X_s - means[j]) / covariances[j]
-            delta = (delta.T * (gamma_s[:,j].flatten())).T
-
-            phi_mu[s,j,:] = delta.sum(axis = 0) * coeff_j
-
-            # Sigma
-            delta2 = ((X_s - means[j])**2 / covariances[j]**2 -1 )
-            delta2 = (delta2.T * (gamma_s[:,j].flatten())).T
-            phi_sigma[s,j,:] = delta2.sum(axis = 0) * coeff_j / np.sqrt(2)
-
-            # phi_sigma_j = 1/(n * np.sqrt(2*weights[j])) * \
-            # np.sum([gamma_s[i,j]* \
-            #         ((X[s*64+i] - means[j])**2 / covariances[j]**2 -1)  \
-            #         for i in range(64) ], axis = 0)
-            # phi_sigma[s,j,:] = phi_sigma_j
-        # pdb.set_trace()
-
-    phi_mu = phi_mu.reshape((n, p * k))
-    phi_sigma = phi_sigma.reshape((n, p * k))
-    # pdb.set_trace()
-    phi_final = np.concatenate((phi_mu, phi_sigma), axis = 1)
-
-    return phi_final
-
 ################################################################################
 
+def compute_statistic_single(X, weights, means, covariances):
+    """
+        Compute the statistics of the generative model for one element.
+
+        Arguments:
+            - X : single data input
+            - weights : weights of each mixture components
+            - means : means of each mixture components
+            - covariances : covariance matricex of each components
+
+        Returns:
+            - phi : representation in row vector
+    """
+    # intialize variables
+    k = weights.shape[0]
+    n = X.shape[0]
+    p = X.shape[1]
+    phi = np.zeros((k,2 * p))
+
+    # compute soft assignments
+    gamma = compute_gamma(X, weights, means, covariances)
+
+    phi_mu2 = np.zeros((k, p))
+    phi_sig2 = np.zeros((k, p))
+
+    # compute representation for each mixture
+    for j in range(0,k):
+        mu      = means[j]
+        sig     = covariances[j]
+        weight  = weights[j]
+        gammaj  = gamma[:,j].reshape((n,1))
+        phi_mu  = np.sum(gammaj * (X - mu) / sig, axis=0)
+        phi_mu  /= (n*np.sqrt(weight))
+        phi_sig = np.sum(gammaj * ((X - mu)**2 / sig**2 - 1), axis=0)
+        phi_sig /= (n*np.sqrt(2 * weight))
+        phi[j,:p] = phi_mu
+        phi[j,p:] = phi_sig
+
+    # flatten representation
+    phi = phi.flatten()
+
+    return phi
+
+################################################################################
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -1060,8 +1042,10 @@ if __name__ == "__main__":
     list_of_words_train = patch_list(Xtr, patch_width)
     logging.info("list of words size : {0}" .format(list_of_words_train.shape))
     # list_of_words_test = patch_list(Xte, patch_width = 4)
-    weights, means, covariances = GaussianMixture_kernel (list_of_words_train, k=n_voc)
-    hists_GMM_train = compute_statistics (list_of_words_train, weights, means, covariances)
+    weights, means, covariances = \
+        GaussianMixture_kernel(list_of_words_train, k=n_voc)
+    hists_GMM_train = \
+        compute_statistic_single(list_of_words_train[0:64,:], weights, means, covariances)
     # hists_GMM_test = compute_statistics (X_test, weights, means, covariances)
     print(hists_GMM_train.shape)
     # hists = np.hstack((hists_patch, hists_HOG, hists_GMM_train))
