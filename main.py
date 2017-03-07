@@ -9,7 +9,7 @@ import pdb
 from scipy.misc import logsumexp
 from scipy.stats import multivariate_normal
 from sklearn import svm
-from sklearn.mixture import GMM
+from sklearn.mixture import GaussianMixture
 
 ################################################################################
 
@@ -855,14 +855,14 @@ def gaussian_mixture(X, k=100):
             - sig : covariance matricex of each components
     """
     # compute the GMM using scikit learn
-    g = GMM(n_components=k, covariance_type='diag')
+    g = GaussianMixture(n_components=k, covariance_type='diag')
     g.fit(X)
     logging.info("GMM trained")
 
     # retrieve results
     w = g.weights_
     mu = g.means_
-    sig = g.covars_
+    sig = g.covariances_
 
     return w, mu, sig
 
@@ -998,7 +998,7 @@ def patch_fisher(X, w, mu, sig, patch_width):
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr, Xte = load_data(5000)
+    Xtr, Ytr, Xte = load_data(1000)
 
     # # build the patch hist
     # n_voc = 100
@@ -1013,7 +1013,7 @@ if __name__ == "__main__":
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
     # build the patch GMM
-    n_mixt = 500
+    n_mixt = 100
     patch_width = 4
     w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
     fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
