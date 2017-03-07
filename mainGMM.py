@@ -904,7 +904,7 @@ def HOG_hists(X, dic, n_bins):
 
 ################################################################################
 
-def GaussianMixture_kernel(X, k=100):
+def gaussian_mixture(X, k=100):
     """
         Gaussian mixture implementation
 
@@ -986,14 +986,14 @@ def compute_statistic_single(X, weights, means, covariances):
 
     # compute representation for each mixture
     for j in range(0,k):
-        mu      = means[j]
-        sig     = covariances[j]
-        weight  = weights[j]
-        gammaj  = gamma[:,j].reshape((n,1))
-        phi_mu  = np.sum(gammaj * (X - mu) / sig, axis=0)
-        phi_mu  /= (n*np.sqrt(weight))
-        phi_sig = np.sum(gammaj * ((X - mu)**2 / sig**2 - 1), axis=0)
-        phi_sig /= (n*np.sqrt(2 * weight))
+        mu        = means[j]
+        sig       = covariances[j]
+        weight    = weights[j]
+        gammaj    = gamma[:,j].reshape((n,1))
+        phi_mu    = np.sum(gammaj * (X - mu) / sig, axis=0)
+        phi_mu   /= (n*np.sqrt(weight))
+        phi_sig   = np.sum(gammaj * ((X - mu)**2 / sig**2 - 1), axis=0)
+        phi_sig  /= (n*np.sqrt(2 * weight))
         phi[j,:p] = phi_mu
         phi[j,p:] = phi_sig
 
@@ -1042,8 +1042,7 @@ if __name__ == "__main__":
     list_of_words_train = patch_list(Xtr, patch_width)
     logging.info("list of words size : {0}" .format(list_of_words_train.shape))
     # list_of_words_test = patch_list(Xte, patch_width = 4)
-    weights, means, covariances = \
-        GaussianMixture_kernel(list_of_words_train, k=n_voc)
+    w, mu, sig = gaussian_mixture(list_of_words_train, k=n_voc)
     hists_GMM_train = \
         compute_statistic_single(list_of_words_train[0:64,:], weights, means, covariances)
     # hists_GMM_test = compute_statistics (X_test, weights, means, covariances)

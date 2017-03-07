@@ -1,19 +1,19 @@
 # -*- coding: UTF-8 -*-
 # import the necessary packages
-import numpy as np
 import os
-import matplotlib.pyplot as plt
 import logging
 import cvxopt
-from sklearn import svm
+import numpy as np
 import sys
 import pdb
-from sklearn import preprocessing
-
+from scipy.misc import logsumexp
+from scipy.stats import multivariate_normal
+from sklearn import svm
+from sklearn.mixture import GMM
 
 ################################################################################
 
-def load_data():
+def load_data(max_rows = 5000):
     """
         Load the data from the data directory.
 
@@ -31,14 +31,15 @@ def load_data():
     Ytr_path = os.path.join(os.getcwd(), "Data", "Ytr.csv")
 
     # load the data
-    Xtr = np.genfromtxt(Xtr_path, delimiter=',')
-    Xte = np.genfromtxt(Xte_path, delimiter=',')
+    Xtr = np.genfromtxt(Xtr_path, delimiter=',', max_rows = max_rows)
+    Xte = np.genfromtxt(Xte_path, delimiter=',', max_rows = max_rows)
     Ytr = np.loadtxt(Ytr_path, delimiter=',', skiprows=1)
 
     # trim the useless data
     Xtr = Xtr[:,0:3072]
     Xte = Xte[:,0:3072]
     Ytr = Ytr[:,1].astype(np.double)
+    Ytr = Ytr[:max_rows]
     logging.info("%d images loaded from file"%Xtr.shape[0])
 
     return Xtr, Ytr, Xte
@@ -234,23 +235,9 @@ def patch_dictionnary(X, n_voc, patch_width):
         Returns:
             - dic : dictionnary of all words
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
-    # define path
-    dic_path = "dic_patch.csv"
-
-    # check if a dictionnary already exists
-    if os.path.isfile(dic_path):
-        # load the dictionnary
-        dic = np.loadtxt(dic_path, delimiter=',')
-        logging.info("Dictionnary loaded from file")
-    else:
-        # build the dictionnary
-        words = patch_list(X, patch_width)          # compute the words list
-        dic = kmeans(words, n_voc, 3)               # compute the dictionnary
-        np.savetxt(dic_path, dic, delimiter=',')    # save the dictionnary
-        logging.info("Dictionnary saved in file %s"%dic_path)
+    # build the dictionnary
+    words = patch_list(X, patch_width)          # compute the words list
+    dic = kmeans(words, n_voc, 3)               # compute the dictionnary
 
     return dic
 
@@ -388,23 +375,13 @@ def Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
         print('kernel name \'%s\' not defined. Script aborted.'%kernel)
         sys.exit(1)
 
-    # check if it already exists
-    if os.path.isfile(gram_path):
-        # load the matrix
-        K = np.loadtxt(gram_path, delimiter=',')
-        logging.info("Gram matrix loaded from file")
-    else:
-        # compute the Gram matrix
-        if kernel == 'linear':
-            K = hists.dot(hists.T)
-        elif kernel == 'poly':
-            K = poly_kernel(hists, hists, degree)
-        elif kernel == 'rbf':
-            K = rbf_kernel(hists, hists, gamma)
-
-        # save the matrix
-        np.savetxt(gram_path, K, delimiter=',')
-        logging.info("Gram matrix saved in file %s"%gram_path)
+    # compute the Gram matrix
+    if kernel == 'linear':
+        K = hists.dot(hists.T)
+    elif kernel == 'poly':
+        K = poly_kernel(hists, hists, degree)
+    elif kernel == 'rbf':
+        K = rbf_kernel(hists, hists, gamma)
 
     return K
 
@@ -494,51 +471,35 @@ def SVM_ovo_predictors(K, Y, C, hists):
         Returns:
             - predictors : predictor of each SVM
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+    # retrieve unique labels
+    Y_unique = np.unique(Y)
+    N = Y_unique.shape[0]
 
-    # define path
-    path = "predictors_ovo.csv"
+    # go through all labels
+    predictors = np.zeros((N * (N - 1) / 2, hists.shape[1] + 1))
+    k = 0
+    for i in range(0, Y_unique.shape[0]-1):
+        for j in range(i+1, Y_unique.shape[0]):
+            # build the data mask
+            mask = (Y==Y_unique[i]) + (Y==Y_unique[j])
 
-    # check if it already exists
-    if os.path.isfile(path):
-        # load the matrix
-        predictors = np.loadtxt(path, delimiter=',')
-        logging.info("Predictors ovo loaded from file")
-    else:
-        # retrieve unique labels
-        Y_unique = np.unique(Y)
-        N = Y_unique.shape[0]
+            # select only the required data
+            K_ij = K[mask,:]
+            K_ij = K_ij[:,mask]
+            hists_ij = hists[mask,:]
+            Y_ij = Y[mask]
+            Y_ij[Y_ij==Y_unique[j]] = -1
+            Y_ij[Y_ij==Y_unique[i]] = 1
 
-        # go through all labels
-        predictors = np.zeros((N * (N - 1) / 2, hists.shape[1] + 1))
-        k = 0
-        for i in range(0, Y_unique.shape[0]-1):
-            for j in range(i+1, Y_unique.shape[0]):
-                # build the data mask
-                mask = (Y==Y_unique[i]) + (Y==Y_unique[j])
+            # compute the corresponding SVM
+            w, rho = SVM_kernel(K_ij, Y_ij, C, hists_ij)
 
-                # select only the required data
-                K_ij = K[mask,:]
-                K_ij = K_ij[:,mask]
-                hists_ij = hists[mask,:]
-                Y_ij = Y[mask]
-                Y_ij[Y_ij==Y_unique[j]] = -1
-                Y_ij[Y_ij==Y_unique[i]] = 1
+            # store the values
+            predictors[k,0:-1] = w.flatten()
+            predictors[k,-1] = rho
 
-                # compute the corresponding SVM
-                w, rho = SVM_kernel(K_ij, Y_ij, C, hists_ij)
-
-                # store the values
-                predictors[k,0:-1] = w.flatten()
-                predictors[k,-1] = rho
-
-                # update iterator
-                k = k + 1
-
-        # save data
-        np.savetxt(path, predictors, delimiter=',')
-        logging.info("Predictors ovo saved in file %s"%path)
+            # update iterator
+            k = k + 1
 
     return predictors
 
@@ -820,23 +781,9 @@ def HOG_dictionnary(X, n_voc, n_bins):
         Returns:
             - dic : dictionnary of all words
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
-    # define path
-    dic_path = "dic_HOG.csv"
-
-    # check if a dictionnary already exists
-    if os.path.isfile(dic_path):
-        # load the dictionnary
-        dic = np.loadtxt(dic_path, delimiter=',')
-        logging.info("Dictionnary loaded from file")
-    else:
-        # build the dictionnary
-        words = HOG_list(X, n_bins)                 # compute the words list
-        dic = kmeans(words, n_voc, 3)               # compute the dictionnary
-        np.savetxt(dic_path, dic, delimiter=',')    # save the dictionnary
-        logging.info("Dictionnary saved in file %s"%dic_path)
+    # build the dictionnary
+    words = HOG_list(X, n_bins)                 # compute the words list
+    dic = kmeans(words, n_voc, 3)               # compute the dictionnary
 
     return dic
 
@@ -893,193 +840,236 @@ def HOG_hists(X, dic, n_bins):
     return hists
 
 ################################################################################
-from sklearn.mixture import GMM
-from scipy.stats import multivariate_normal
 
+def gaussian_mixture(X, k=100):
+    """
+        Gaussian mixture implementation
 
-def GaussianMixture_kernel (X, k=100):
-
-    '''
-        Gaussian mixture from Sklearn
-
-        Arguments: 
+        Arguments:
+            - X : data input stored in row vectors
             - k : number of components for GMM
-            - covariance type : spherical by default
-            - X : dataset
 
-        returns :
-            - weights : array of weights of each mixture components
-            - means : array of means of each mixture components
-            - covariances : array of covariance types 
-
-    '''
-    g = GMM(n_components=k, covariance_type='spherical')
+        Returns:
+            - w : weights of each mixture components
+            - mu : means of each mixture components
+            - sig : covariance matricex of each components
+    """
+    # compute the GMM using scikit learn
+    g = GMM(n_components=k, covariance_type='diag')
     g.fit(X)
+    logging.info("GMM trained")
 
-    return g.weights_, g.means_, g.covars_
+    # retrieve results
+    w = g.weights_
+    mu = g.means_
+    sig = g.covars_
 
-from scipy.misc import logsumexp
-
-def compute_gamma(X, weights, means, covariances):
-    """
-        Compute matrice gamma. gamma[i,j] can be interpreted as the
-        soft assignement of word i to component j 
-
-        Arguments : 
-            - X : dataset
-            - weights : array of weights of each mixture components
-            - means : array of means of each mixture components
-            - covariances : array of covariance types 
-        
-        Return Gamma matrice of size (n,p) . 
-            n = nb of samples, p nb of mixtures
-
-    """
-
-    k = len(weights)
-    n = X.shape[0]
-    p = X.shape[1]
-    gamma = np.zeros((n, k))
-    
-    for i in range(n):
-    	log_denominateur = logsumexp([multivariate_normal.logpdf(X[i,:], means[l], covariances[l]) for l in range(k)])
-    	print('log denominateur : %d' %log_denominateur)
-        for j in range(k):
-            log_gamma = np.log(weights[j])  + multivariate_normal.logpdf(X[i,:], means[j], covariances[j]) - log_denominateur
-            gamma[i,j] = np.exp(log_gamma)
-    return gamma
-
-
-def compute_statistics (X, weights, means, covariances):
-    """
-        Compute the statistics of the generative model
-
-        Arguments : 
-            - X dataset
-            - weights : array of weights of each mixture components
-            - means : array of means of each mixture components
-            - covariances : array of covariance types 
-
-        Return : 
-            - phi_mu : 
-            - phi_sigma : 
-
-    """
-
-    k = len(weights)
-    n = X.shape[0]
-    p = X.shape[1]
-    phi_mu = np.zeros((k, p))
-    phi_sigma = np.zeros((k, p))
-    gamma = compute_gamma(X, weights, means, covariances)
-
-
-    for j in range(k):
-        phi_mu_j = 1/(n * np.sqrt(weights[j])) * \
-        np.sum([gamma[i,j]* \
-                (X[i] - means[j]) / covariances[j] \
-                for i in range(n) ], axis = 0)
-        phi_mu[j,:] = phi_mu_j
-            
-            
-        phi_sigma_j = 1/(n * np.sqrt(2*weights[j])) * \
-        np.sum([gamma[i,j]* \
-                ((X[i] - means[j])**2 / covariances[j]**2 -1)  \
-                for i in range(n) ], axis = 0)
-        phi_sigma[j,:] = phi_sigma_j
-
-    phi_final = np.concatenate((phi_mu, phi_sigma), axis = 1)
-
-    return phi_final
+    return w, mu, sig
 
 ################################################################################
 
+def compute_gamma(X, weights, means, covariances):
+    """
+        Compute the soft assignment to the GMM for each row vector in X.
+
+        Arguments:
+            - weights : weights of each mixture components
+            - means : means of each mixture components
+            - covariances : covariance matricex of each components
+
+        Returns:
+            - gamma : probability of belonging to a GMM
+
+    """
+    # intialize variables
+    k = weights.shape[0]
+    n = X.shape[0]
+    gamma = np.zeros((n, k))
+
+    # loop through all mixtures
+    for i in range(0,k):
+        sig = np.diag(covariances[i])
+        mu = means[i]
+        weight = weights[i]
+        gamma[:,i] = np.log(multivariate_normal.pdf(X,mu,sig)) + np.log(weight)
+
+    # normalize probabilities
+    gamma = gamma - logsumexp(gamma, axis=1).reshape(gamma.shape[0],1)
+    gamma = np.exp(gamma)
+
+    return gamma
+
+################################################################################
+
+def compute_statistics_single(X, weights, means, covariances):
+    """
+        Compute the statistics of the generative model for one element.
+
+        Arguments:
+            - X : single data input
+            - weights : weights of each mixture components
+            - means : means of each mixture components
+            - covariances : covariance matricex of each components
+
+        Returns:
+            - phi : representation in row vector
+    """
+    # intialize variables
+    k = weights.shape[0]
+    n = X.shape[0]
+    p = X.shape[1]
+    phi = np.zeros((k,2 * p))
+
+    # compute soft assignments
+    gamma = compute_gamma(X, weights, means, covariances)
+
+    # compute representation for each mixture
+    for j in range(0,k):
+        mu        = means[j]
+        sig       = covariances[j]
+        weight    = weights[j]
+        gammaj    = gamma[:,j].reshape((n,1))
+        phi_mu    = np.sum(gammaj * (X - mu) / sig, axis=0)
+        phi_mu   /= (n*np.sqrt(weight))
+        phi_sig   = np.sum(gammaj * ((X - mu)**2 / sig**2 - 1), axis=0)
+        phi_sig  /= (n*np.sqrt(2 * weight))
+        phi[j,:p] = phi_mu
+        phi[j,p:] = phi_sig
+
+    # flatten representation
+    phi = phi.flatten()
+
+    return phi
+
+################################################################################
+
+def patch_gmm(X, n_mixt, patch_width):
+    """
+        Build the patch dictionnary of the input X containing n_words using
+        K-mean clustering.
+
+        Arguments:
+            - X : dataset
+            - n_mixt : number of gaussian mixtures
+            - patch_width : width of the patch
+
+        Returns:
+            - w : weights of each mixture components
+            - mu : means of each mixture components
+            - sig : covariance matricex of each components
+    """
+    # build the dictionnary
+    words = patch_list(X, patch_width)              # compute the words list
+    w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
+
+    return w, mu, sig
+
+################################################################################
+
+def patch_fisher(X, w, mu, sig, patch_width):
+    """
+        Compute histograms for all images.
+
+        Arguments:
+            - X : dataset
+            - w : weights of each mixture components
+            - mu : means of each mixture components
+            - sig : covariance matricex of each components
+            - patch_width : width of the patch
+
+        Returns:
+            - fisher : fisher vectors of all images
+    """
+    # retrieve dimensions
+    n = X.shape[0]
+    k = w.shape[0]
+    p = patch_width**2
+
+    fisher = np.zeros((n, 2 * k * p))
+    for i in range(0, n):
+        # retrieve the first histogram
+        im = build_image(X[i,:])
+        feat = patch_features(im, patch_width)
+        fisher[i,:] = compute_statistics_single(feat, w, mu, sig)
+
+    return fisher
+
+################################################################################
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr, Xte = load_data()
-    print(Xtr.shape)
-    
-    scaler = preprocessing.StandardScaler().fit(Xtr)
-    Xtr_transformed = scaler.transform(Xtr)
-    Xte_transformed = scaler.transform(Xte)
+    Xtr, Ytr, Xte = load_data(5000)
 
-    # # build the dictionnary
-    # n_voc = 1000
-    # n_bins = 9
+    # # build the patch hist
+    # n_voc = 100
     # patch_width = 4
     # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
-    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
-
-    # # generate histograms list
     # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+
+    # # build the HOG hist
+    # n_voc = 100
+    # n_bins = 9
+    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
-    # hists = np.hstack((hists_patch, hists_HOG))
 
-    # # generate the Gram matrix
-    # # K = hists.dot(hists.T)
-    # K = Gram(Xtr, hists, kernel = 'rbf', degree = 3, gamma = 1)
+    # build the patch GMM
+    n_mixt = 500
+    patch_width = 4
+    w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
+    fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
 
-    # # find best C
-    # n = 10
-    # best_C = None
-    # print("C\tError")
-    # for C in 0.01*2**np.arange(0,15):
-    #     err = 0
-    #     for i in range(0,n):
-    #         # split the data
-    #         perm = np.random.permutation(K.shape[0])
-    #         perm_tr = perm[:int(K.shape[0]*0.8)]
-    #         perm_te = perm[int(K.shape[0]*0.8):]
-    #         Y_CV_tr = Ytr[perm_tr]
-    #         Y_CV_te = Ytr[perm_te]
-    #         hists_CV_tr = hists[perm_tr,:]
-    #         hists_CV_te = hists[perm_te,:]
-    #         K_CV_tr = K[perm_tr,:]
-    #         K_CV_tr = K_CV_tr[:,perm_tr]
+    # combine features
+    # feats = np.hstack((hists_patch, hists_HOG))
+    feats = fisher_patch
 
-    #         # # train our SVM
-    #         # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-    #         # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+    # generate the Gram matrix
+    K = feats.dot(feats.T)
+    # K = Gram(Xtr, feats, kernel = 'rbf', degree = 3, gamma = 1)
 
-    #         # train scikit SVM
-    #         clf = svm.SVC(kernel='precomputed', C=C)
-    #         clf.fit(K_CV_tr, Y_CV_tr)
-    #         K_CV_te = K[perm_te,:]
-    #         K_CV_te = K_CV_te[:,perm_tr]
-    #         Y_CV_pred = clf.predict(K_CV_te)
+    # find best C
+    n = 10
+    best_C = None
+    print("C\tError")
+    for C in 0.01*2**np.arange(0,15):
+        err = 0
+        for i in range(0,n):
+            # split the data
+            perm = np.random.permutation(K.shape[0])
+            perm_tr = perm[:int(K.shape[0]*0.8)]
+            perm_te = perm[int(K.shape[0]*0.8):]
+            Y_CV_tr = Ytr[perm_tr]
+            Y_CV_te = Ytr[perm_te]
+            hists_CV_tr = feats[perm_tr,:]
+            hists_CV_te = feats[perm_te,:]
+            K_CV_tr = K[perm_tr,:]
+            K_CV_tr = K_CV_tr[:,perm_tr]
 
-    #         err += error(Y_CV_pred, Y_CV_te)
-    #     err = err / n
-    #     print("%0.2f\t%d"%(C, err))
-    #     if best_C is None or err < best_err:
-    #         best_err = err
-    #         best_C = C
-    # print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
+            # # train our SVM
+            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
+            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
+
+            # train scikit SVM
+            clf = svm.SVC(kernel='precomputed', C=C)
+            clf.fit(K_CV_tr, Y_CV_tr)
+            K_CV_te = K[perm_te,:]
+            K_CV_te = K_CV_te[:,perm_tr]
+            Y_CV_pred = clf.predict(K_CV_te)
+
+            err += error(Y_CV_pred, Y_CV_te)
+        err = err / n
+        print("%0.2f\t%d"%(C, err))
+        if best_C is None or err < best_err:
+            best_err = err
+            best_C = C
+    print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
 
     # # final prediction
     # C = best_C
-    # predictors = SVM_ova_predictors(K, Ytr, C, hists)
+    # predictors = SVM_ova_predictors(K, Ytr, C, feats)
     # hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
     # hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
     # hists_te = np.hstack((hists_patch_te, hists_HOG_te))
     # Yte = SVM_ova_predict(hists_te, predictors)
     # save_submit(Yte)
 
-    # pdb.set_trace()
 
-
-
-    # centers = np.random.rand(20, 10)*10
-    # X_train = np.concatenate([np.random.randn(100, 10) + centers[1, :] for i in range(20)])
-
-    # X_test = np.concatenate([np.random.randn(20, 10) + centers[1, :] for i in range(20)])
-
-    weights, means, covariances = GaussianMixture_kernel (Xtr_transformed, k=10)
-    print (weights)
-
-    hists_GMM_train = compute_statistics (Xtr_transformed, weights, means, covariances)
-    # hists_GMM_test = compute_statistics (Xte_transformed, weights, means, covariances)
-
-    # logging.info("Train size %s"%hists_GMM_train.shape)
-    # logging.info("Test size %s"%hists_GMM_test.shape)
