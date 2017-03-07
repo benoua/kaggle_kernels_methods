@@ -218,7 +218,7 @@ def kmeans(X, k, n_try):
 
     logging.info("Kmeans converged.")
 
-    return best_centroids
+    return best_centroids, labels
 
 ################################################################################
 
@@ -237,7 +237,7 @@ def patch_dictionnary(X, n_voc, patch_width):
     """
     # build the dictionnary
     words = patch_list(X, patch_width)          # compute the words list
-    dic = kmeans(words, n_voc, 3)               # compute the dictionnary
+    dic, _ = kmeans(words, n_voc, 3)               # compute the dictionnary
 
     return dic
 
@@ -783,7 +783,7 @@ def HOG_dictionnary(X, n_voc, n_bins):
     """
     # build the dictionnary
     words = HOG_list(X, n_bins)                 # compute the words list
-    dic = kmeans(words, n_voc, 3)               # compute the dictionnary
+    dic, _ = kmeans(words, n_voc, 3)               # compute the dictionnary
 
     return dic
 
@@ -865,6 +865,95 @@ def gaussian_mixture(X, k=100):
     sig = g.covariances_
 
     return w, mu, sig
+
+################################################################################
+
+def gmm(x, k, n_init=1):
+    """    
+        Gaussian mixture implementation
+
+        Arguments:
+            - X : data input stored in row vectors
+            - k : number of components for GMM
+            - n_init : number of initializations for kmeans
+
+        Returns:
+            - w : weights of each mixture components
+            - mu : means of each mixture components
+            - sig : covariance matricex of each components
+    
+    """
+
+    # Setup the logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+    logging.info("---- EM algorithm for identity covariance ----")
+
+    # Declare the variables used for storing the data
+    n = x.shape[0]
+    p = x.shape[1]
+
+    # Initialize the variable for the EM algirithm using k-means
+    logging.info("---- K-mean initialisation ----")
+    centroids, labels = kmeans(x, k, n_init)
+    
+    q = np.zeros((n,k))
+    mu = np.zeros((k,p))
+    mu = np.copy(centroids)
+    sigma = np.random.rand(k,p)
+    pi = np.zeros(k)
+    
+    for i in np.arange(0, k):
+        pi[i] = np.sum(labels==i)/float(n)
+    mu_old = np.zeros((k,p))
+    sigma_old = np.zeros((k,p))
+    logging.info("---- K-mean initialisation ended ----")
+
+    # Loop
+    logging.info("---- EM steps looping ----")
+    l = 0;
+    while np.sum(np.square(mu_old-mu))+np.sum(np.square(sigma_old-sigma))>1e-6:
+        # Record old values
+        mu_old = np.copy(mu)
+        sigma_old = np.copy(sigma)
+
+        '''E - STEP'''
+        for i in np.arange(0,k):
+            
+            sig_ = np.diag(sigma[i,:])
+            mu_ = mu[i]
+            pi_ = pi[i]
+            
+            q[:,i] = np.log(pi_) + multivariate_normal.logpdf(x, mu_, sig_)
+            
+        q = q - logsumexp(q, axis = 1).reshape(q.shape[0], 1)
+
+        q = np.exp(q)
+              
+        
+        '''M - STEP'''
+        pi = np.sum(q, axis=0)
+
+        
+        for i in np.arange(0,k):
+            mu[i,:] = np.sum(x*q[:,i].reshape((x.shape[0],1)), axis=0)/pi[i]
+            
+            # sigma 
+            for j in range(p) :
+                sum_ = 0
+                for s in range(n): 
+                
+                    sum_ += (x[s,j] - mu[i,j])**2 * q[s,i]
+                sigma[i,j] = sum_ / pi[i]
+            
+        pi = pi/np.sum(pi)
+
+        # Update the number of iterations
+        l += 1
+
+    logging.info("EM algorithm converged after %d iterations"%l)
+
+    return pi, mu, sigma
+        
 
 ################################################################################
 
@@ -960,6 +1049,7 @@ def patch_gmm(X, n_mixt, patch_width):
     """
     # build the dictionnary
     words = patch_list(X, patch_width)              # compute the words list
+    # w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
     w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
 
     return w, mu, sig
@@ -998,7 +1088,7 @@ def patch_fisher(X, w, mu, sig, patch_width):
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr, Xte = load_data(1000)
+    Xtr, Ytr, Xte = load_data(100)
 
     # # build the patch hist
     # n_voc = 100
@@ -1013,7 +1103,7 @@ if __name__ == "__main__":
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
     # build the patch GMM
-    n_mixt = 100
+    n_mixt = 10
     patch_width = 4
     w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
     fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
