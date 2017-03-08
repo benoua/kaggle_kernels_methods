@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from scipy.misc import logsumexp
 from scipy.stats import multivariate_normal
 from sklearn import svm
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GMM
 
 ################################################################################
 
@@ -840,20 +840,20 @@ def gaussian_mixture(X, k=100):
             - sig : covariance matricex of each components
     """
     # compute the GMM using scikit learn
-    g = GaussianMixture(n_components=k, covariance_type='diag')
+    g = GMM(n_components=k, covariance_type='diag')
     g.fit(X)
     logging.info("GMM trained")
 
     # retrieve results
     w = g.weights_
     mu = g.means_
-    sig = g.covariances_
+    sig = g.covars_
 
     return w, mu, sig
 
 ################################################################################
 
-def gmm(x, k, n_init=1):
+def gmm(x, k, n_init=1, tol = 1e-6, max_iter = 100):
     """
         Gaussian mixture implementation
 
@@ -861,6 +861,8 @@ def gmm(x, k, n_init=1):
             - X : data input stored in row vectors
             - k : number of components for GMM
             - n_init : number of initializations for kmeans
+            - tol : max precision before stoping algo
+            - max_iter : number max of EM iterations
 
         Returns:
             - w : weights of each mixture components
@@ -896,7 +898,8 @@ def gmm(x, k, n_init=1):
     # Loop
     logging.info("---- EM steps looping ----")
     l = 0;
-    while np.sum(np.square(mu_old-mu))+np.sum(np.square(sigma_old-sigma))>1e-6:
+    while np.sum(np.square(mu_old-mu))+np.sum(np.square(sigma_old-sigma))>tol \
+     and l < max_iter:
         # Record old values
         mu_old = np.copy(mu)
         sigma_old = np.copy(sigma)
@@ -924,11 +927,9 @@ def gmm(x, k, n_init=1):
 
             # sigma
             for j in range(p) :
-                sum_ = 0
-                for s in range(n):
-
-                    sum_ += (x[s,j] - mu[i,j])**2 * q[s,i]
-                sigma[i,j] = sum_ / pi[i]
+                temp = np.sum( ((x[:,j] - mu[i, j])**2 ) * q[:,i], axis = 0) 
+                
+                sigma[i,j] = temp / pi[i]
 
         pi = pi/np.sum(pi)
 
@@ -1035,7 +1036,7 @@ def patch_gmm(X, n_mixt, patch_width):
     # build the dictionnary
     words = patch_list(X, patch_width)              # compute the words list
     # w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
-    w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
+    w, mu, sig = gmm(words, n_mixt)    # compute the gmm
 
     return w, mu, sig
 
@@ -1128,13 +1129,13 @@ def cross_validation(K, n, C_array, display = True):
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr, Xte = load_data(1000)
+    Xtr, Ytr, Xte = load_data(100)
 
     # build the patch hist
-    n_voc = 200
-    patch_width = 4
-    dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
-    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    # n_voc = 200
+    # patch_width = 4
+    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
+    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
 
     # # build the HOG hist
     # n_voc = 200
@@ -1143,15 +1144,15 @@ if __name__ == "__main__":
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
     # # build the patch GMM
-    # n_mixt = 200
-    # patch_width = 4
-    # w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
-    # fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
+    n_mixt = 20
+    patch_width = 4
+    w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
+    fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
 
     # combine features
     # feats = np.hstack((hists_patch, hists_HOG))
-    feats = hists_patch
-    # feats = fisher_patch
+    # feats = hists_patch
+    feats = fisher_patch
 
     # generate the Gram matrix
     # K = feats.dot(feats.T)
