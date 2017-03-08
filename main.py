@@ -24,9 +24,6 @@ def load_data(max_rows = 5000):
             - Xte : testing dataset
             - Ytr : training labels
     """
-    # initialize logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
     # define the different path
     Xtr_path = os.path.join(os.getcwd(), "Data", "Xtr.csv")
     Xte_path = os.path.join(os.getcwd(), "Data", "Xte.csv")
@@ -42,7 +39,6 @@ def load_data(max_rows = 5000):
     Xte = Xte[:,0:3072]
     Ytr = Ytr[:,1].astype(np.double)
     Ytr = Ytr[:max_rows]
-    logging.info("%d images loaded from file"%Xtr.shape[0])
 
     return Xtr, Ytr, Xte
 
@@ -1077,42 +1073,26 @@ def patch_fisher(X, w, mu, sig, patch_width):
 
 ################################################################################
 
-if __name__ == "__main__":
-    # load the data
-    Xtr, Ytr, Xte = load_data(1000)
+def cross_validation(K, n, C_array, display = True):
+    """
+        Use cross validation to find C.
 
-    # # build the patch hist
-    # n_voc = 200
-    # patch_width = 4
-    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width, True)
-    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+        Arguments:
+            - K : Gram matrix
+            - n : number of tries for each C
+            - C_array: values of C to try
 
-    # # build the HOG hist
-    # n_voc = 200
-    # n_bins = 9
-    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins, True)
-    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
-
-    # build the patch GMM
-    n_mixt = 200
-    patch_width = 4
-    w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
-    fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
-
-    # combine features
-    # feats = np.hstack((hists_patch, hists_HOG))
-    # feats = hists_patch
-    feats = fisher_patch
-
-    # generate the Gram matrix
-    # K = feats.dot(feats.T)
-    K = Gram(Xtr, feats, kernel = 'rbf', degree = 3, gamma = 1)
+        Returns:
+            - best_C : C parameter that minimizes the error
+            - best_err : corresponding error
+    """
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
     # find best C
-    n = 10
     best_C = None
-    print("C\tError")
-    for C in 0.5*1.5**np.arange(0,20):
+    if display: logging.info("C\tError")
+    for C in C_array:
         err = 0
         for i in range(0,n):
             # split the data
@@ -1126,10 +1106,6 @@ if __name__ == "__main__":
             K_CV_tr = K[perm_tr,:]
             K_CV_tr = K_CV_tr[:,perm_tr]
 
-            # # train our SVM
-            # CV_predictors = SVM_ova_predictors(K_CV_tr, Y_CV_tr, C, hists_CV_tr)
-            # Y_CV_pred = SVM_ova_predict(hists_CV_te, CV_predictors)
-
             # train scikit SVM
             clf = svm.SVC(kernel='precomputed', C=C)
             clf.fit(K_CV_tr, Y_CV_tr)
@@ -1139,11 +1115,66 @@ if __name__ == "__main__":
 
             err += error(Y_CV_pred, Y_CV_te)
         err = err / n
-        print("%0.2f\t%d"%(C, err))
+        if display: logging.info("%0.3f\t%0.1f"%(C, err))
         if best_C is None or err < best_err:
             best_err = err
             best_C = C
-    print("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
+    if display: logging.info("Best C: %0.3f, error: %0.1f"%(best_C, best_err))
+
+    return best_C, best_err
+
+################################################################################
+
+if __name__ == "__main__":
+    # load the data
+    Xtr, Ytr, Xte = load_data(1000)
+
+    # build the patch hist
+    n_voc = 200
+    patch_width = 4
+    dic_patch = patch_dictionnary(Xtr, n_voc, patch_width, True)
+    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+
+    # # build the HOG hist
+    # n_voc = 200
+    # n_bins = 9
+    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins, True)
+    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+
+    # # build the patch GMM
+    # n_mixt = 200
+    # patch_width = 4
+    # w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
+    # fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
+
+    # combine features
+    # feats = np.hstack((hists_patch, hists_HOG))
+    # feats = hists_patch
+    feats = fisher_patch
+
+    # generate the Gram matrix
+    # K = feats.dot(feats.T)
+    K1 = Gram(feats, kernel = 'linear')
+    K2 = Gram(feats, kernel = 'poly', degree = 1)
+    K3 = Gram(feats, kernel = 'poly', degree = 2)
+    K4 = Gram(feats, kernel = 'poly', degree = 3)
+    K5 = Gram(feats, kernel = 'poly', degree = 4)
+    K6 = Gram(feats, kernel = 'poly', degree = 5)
+    K7 = Gram(feats, kernel = 'rbf', gamma = 0.5)
+    K8 = Gram(feats, kernel = 'rbf', gamma = 0.75)
+    K9 = Gram(feats, kernel = 'rbf', gamma = 1)
+    K10 = Gram(feats, kernel = 'rbf', gamma = 1.5)
+    K11 = Gram(feats, kernel = 'rbf', gamma = 2)
+    K12 = Gram(feats, kernel = 'rbf', gamma = 2.5)
+
+    # cross validation
+    n = 10
+    C_array = 0.01*1.5**np.arange(0,30)
+    i = 0
+    print("K\terror\tC")
+    for K in [K1,K2,K3,K4,K5,K6,K7,K8,K9,K10,K11]:
+        best_C, best_err = cross_validation(K, n, C_array, False)
+        print("K%d\t%0.1f\t%0.2f"%(i,best_err,best_C))
 
     # # final prediction
     # C = best_C
