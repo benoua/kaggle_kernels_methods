@@ -6,6 +6,8 @@ import cvxopt
 import numpy as np
 import sys
 import pdb
+from scipy.spatial import distance as dist
+from matplotlib import pyplot as plt
 from scipy.misc import logsumexp
 from scipy.stats import multivariate_normal
 from sklearn import svm
@@ -162,6 +164,7 @@ def kmeans(X, k, n_try):
 
         Returns:
             - best_centroids : cluster points
+            - labels : corresponding association
     """
     # initialize logger
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -195,7 +198,7 @@ def kmeans(X, k, n_try):
             label_change = np.sum(old_labels != labels)
             logging.info("Kmeans: iter %d-%d, change: %d, error: %0.4f" %
                 (l+1, j+1, label_change, err_tot))
-            label_change = label_change > 10000
+            label_change = label_change > X.shape[0]*5./100
             j += 1
 
             # check if at least one point is assigned to the centroid
@@ -222,7 +225,7 @@ def kmeans(X, k, n_try):
 
 ################################################################################
 
-def patch_dictionnary(X, n_voc, patch_width):
+def patch_dictionnary(X, n_voc, patch_width, show_distrib=False):
     """
         Build the patch dictionnary of the input X containing n_words using
         K-mean clustering.
@@ -237,7 +240,33 @@ def patch_dictionnary(X, n_voc, patch_width):
     """
     # build the dictionnary
     words = patch_list(X, patch_width)          # compute the words list
-    dic, _ = kmeans(words, n_voc, 3)               # compute the dictionnary
+    dic, labels = kmeans(words, n_voc, 3)       # compute the dictionnary
+
+    # display histogram
+    if show_distrib:
+        # compute distributiom
+        prob, _, _ = plt.hist(labels, bins=n_voc, normed=True)
+        sort_id = prob.argsort()[::-1]
+        temp = np.zeros(labels.shape)
+        uniques = np.unique(labels)
+        for i in range(0, uniques.shape[0]):
+            temp[labels==sort_id[i]] = i
+        cumsum = prob[sort_id].cumsum() / prob.sum()
+
+        # plot the results
+        plt.clf()
+        fig, ax1 = plt.subplots()
+        ax1.set_xlabel("word number")
+        ax1.set_title("patch dictionnary: %d words for %d images"%(n_voc,X.shape[0]))
+        ax1.hist(temp, bins=n_voc, normed=True, color='b')
+        ax1.set_ylabel('individual probability', color='b')
+        ax1.tick_params('y', colors='b')
+        ax2 = ax1.twinx()
+        ax2.plot(cumsum, color='r')
+        ax2.set_ylabel('cumulative probability', color='r')
+        ax2.tick_params('y', colors='r')
+        plt.savefig("fig/dic_patch_%d_%d.jpg"%(n_voc,X.shape[0]))
+        fig.show()
 
     return dic
 
@@ -267,6 +296,7 @@ def patch_hist(im, dic, patch_width):
 
     # normalize histogram
     hist = np.sqrt(hist / hist.sum())
+    # hist = hist / hist.sum()
 
     return hist
 
@@ -295,64 +325,11 @@ def patch_hists(X, dic, patch_width):
 
 ################################################################################
 
-def rbf_kernel(X1, X2, gamma = None):
-    """
-        Compute the rbf kernel of vectors X1 and X2.
-
-        Arguments:
-            - X1 : first input vector
-            - X2 : second input vector
-            - gamma : scaling parameter
-
-        Returns:
-            - K : Gram matrix
-    """
-    # initialize variables
-    n1 = X1.shape[0]
-    n2 = X2.shape[0]
-    K = np.empty((n1, n2))
-    gamma = 1. / np.sqrt(n1*n2) if gamma is None else gamma
-
-    # compute the Gram matrix
-    for i in range(n1):
-        for j in range(n2):
-            K[i, j] = np.exp(-gamma * np.linalg.norm(X1[i] - X2[j]))
-    return K
-
-################################################################################
-
-def poly_kernel (X1, X2, degree = 3):
-    """
-        Compute the polynomial kernel of vectors X1 and X2.
-
-        Arguments:
-            - X1 : first input vector
-            - X2 : second input vector
-            - degree : polynomial degree
-
-        Returns:
-            - K : Gram matrix
-    """
-    # initialize variables
-    n1 = X1.shape[0]
-    n2 = X2.shape[0]
-    K = np.empty((n1, n2))
-
-    # compute the Gram matrix
-    for i in range(n1):
-        for j in range(n2):
-            K[i, j] = (1 + np.dot(X1[i], X2[j] )) ** int(degree)
-
-    return K
-
-##################################################################################
-
-def Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
+def Gram(hists, kernel = 'linear', degree = 3, gamma = None):
     """
         Generate the Gram matrix corresponding to the patch feature.
 
         Arguments:
-            - X : dataset
             - hists : histogramme of the image among patches
             - kernel : type of kernel used (linear, poly or rbf)
             - degree : degree for polynomial kernel
@@ -379,9 +356,9 @@ def Gram(X, hists, kernel = 'linear', degree = 3, gamma = None):
     if kernel == 'linear':
         K = hists.dot(hists.T)
     elif kernel == 'poly':
-        K = poly_kernel(hists, hists, degree)
+        K = (1 + hists.dot(hists.T)) ** int(degree)
     elif kernel == 'rbf':
-        K = rbf_kernel(hists, hists, gamma)
+        K = np.exp(-gamma * dist.squareform(dist.pdist(hists, 'euclidean'))**2)
 
     return K
 
@@ -584,7 +561,8 @@ def SVM_ovo_predict(hists, predictors):
                 # update iterator
                 k = k + 1
         # classe to win has the most votes
-        winners = np.argwhere(votes.sum(axis=1) == np.amax(votes.sum(axis=1))).flatten()
+        winners = np.argwhere(votes.sum(axis=1) == np.amax(votes.sum(axis=1)))
+        winners = winners.flatten()
         # choosing randomly the final winner between all winning classes
         Ypred[l] = np.random.choice(winners)
 
@@ -768,7 +746,7 @@ def HOG_list(X, n_bins):
 
 ################################################################################
 
-def HOG_dictionnary(X, n_voc, n_bins):
+def HOG_dictionnary(X, n_voc, n_bins, show_distrib=False):
     """
         Build the patch dictionnary of the input X containing n_words using
         K-mean clustering.
@@ -783,7 +761,16 @@ def HOG_dictionnary(X, n_voc, n_bins):
     """
     # build the dictionnary
     words = HOG_list(X, n_bins)                 # compute the words list
-    dic, _ = kmeans(words, n_voc, 3)               # compute the dictionnary
+    dic, labels = kmeans(words, n_voc, 3)       # compute the dictionnary
+
+    # display histogram
+    if show_distrib:
+        plt.hist(labels, bins=n_voc, normed=True)
+        plt.title("HOG dictionnary %d words for %d images"%(n_voc,X.shape[0]))
+        plt.xlabel("word number")
+        plt.ylabel("probability")
+        plt.savefig("fig/dic_HOG_%d_%d.jpg"%(n_voc,X.shape[0]))
+        plt.show()
 
     return dic
 
@@ -813,6 +800,7 @@ def HOG_hist(im, dic, n_bins):
 
     # normalize histogram
     hist = np.sqrt(hist / hist.sum())
+    # hist = hist / hist.sum()
 
     return hist
 
@@ -869,7 +857,7 @@ def gaussian_mixture(X, k=100):
 ################################################################################
 
 def gmm(x, k, n_init=1):
-    """    
+    """
         Gaussian mixture implementation
 
         Arguments:
@@ -881,7 +869,7 @@ def gmm(x, k, n_init=1):
             - w : weights of each mixture components
             - mu : means of each mixture components
             - sig : covariance matricex of each components
-    
+
     """
 
     # Setup the logger
@@ -895,13 +883,13 @@ def gmm(x, k, n_init=1):
     # Initialize the variable for the EM algirithm using k-means
     logging.info("---- K-mean initialisation ----")
     centroids, labels = kmeans(x, k, n_init)
-    
+
     q = np.zeros((n,k))
     mu = np.zeros((k,p))
     mu = np.copy(centroids)
     sigma = np.random.rand(k,p)
     pi = np.zeros(k)
-    
+
     for i in np.arange(0, k):
         pi[i] = np.sum(labels==i)/float(n)
     mu_old = np.zeros((k,p))
@@ -918,33 +906,33 @@ def gmm(x, k, n_init=1):
 
         '''E - STEP'''
         for i in np.arange(0,k):
-            
+
             sig_ = np.diag(sigma[i,:])
             mu_ = mu[i]
             pi_ = pi[i]
-            
+
             q[:,i] = np.log(pi_) + multivariate_normal.logpdf(x, mu_, sig_)
-            
+
         q = q - logsumexp(q, axis = 1).reshape(q.shape[0], 1)
 
         q = np.exp(q)
-              
-        
+
+
         '''M - STEP'''
         pi = np.sum(q, axis=0)
 
-        
+
         for i in np.arange(0,k):
             mu[i,:] = np.sum(x*q[:,i].reshape((x.shape[0],1)), axis=0)/pi[i]
-            
-            # sigma 
+
+            # sigma
             for j in range(p) :
                 sum_ = 0
-                for s in range(n): 
-                
+                for s in range(n):
+
                     sum_ += (x[s,j] - mu[i,j])**2 * q[s,i]
                 sigma[i,j] = sum_ / pi[i]
-            
+
         pi = pi/np.sum(pi)
 
         # Update the number of iterations
@@ -953,7 +941,7 @@ def gmm(x, k, n_init=1):
     logging.info("EM algorithm converged after %d iterations"%l)
 
     return pi, mu, sigma
-        
+
 
 ################################################################################
 
@@ -1075,52 +1063,56 @@ def patch_fisher(X, w, mu, sig, patch_width):
     k = w.shape[0]
     p = patch_width**2
 
-    fisher = np.zeros((n, 2 * k * p))
+    # fisher = np.zeros((n, 2 * k * p))
+    temp = np.zeros((n,k))
     for i in range(0, n):
         # retrieve the first histogram
         im = build_image(X[i,:])
         feat = patch_features(im, patch_width)
-        fisher[i,:] = compute_statistics_single(feat, w, mu, sig)
-
-    return fisher
+        gamma = compute_gamma(feat, w, mu, sig).sum(axis=0)/n
+        temp[i,:] = np.sqrt(gamma / gamma.sum())
+        # fisher[i,:] = compute_statistics_single(feat, w, mu, sig)
+    # return fisher
+    return temp
 
 ################################################################################
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr, Xte = load_data(100)
+    Xtr, Ytr, Xte = load_data(1000)
 
     # # build the patch hist
-    # n_voc = 100
+    # n_voc = 200
     # patch_width = 4
-    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
+    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width, True)
     # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
 
     # # build the HOG hist
-    # n_voc = 100
+    # n_voc = 200
     # n_bins = 9
-    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
+    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins, True)
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
     # build the patch GMM
-    n_mixt = 10
+    n_mixt = 200
     patch_width = 4
     w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
     fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
 
     # combine features
     # feats = np.hstack((hists_patch, hists_HOG))
+    # feats = hists_patch
     feats = fisher_patch
 
     # generate the Gram matrix
-    K = feats.dot(feats.T)
-    # K = Gram(Xtr, feats, kernel = 'rbf', degree = 3, gamma = 1)
+    # K = feats.dot(feats.T)
+    K = Gram(Xtr, feats, kernel = 'rbf', degree = 3, gamma = 1)
 
     # find best C
     n = 10
     best_C = None
     print("C\tError")
-    for C in 0.01*2**np.arange(0,15):
+    for C in 0.5*1.5**np.arange(0,20):
         err = 0
         for i in range(0,n):
             # split the data
