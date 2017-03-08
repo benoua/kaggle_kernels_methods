@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from scipy.misc import logsumexp
 from scipy.stats import multivariate_normal
 from sklearn import svm
-from sklearn.mixture import GMM
+from sklearn.mixture import GaussianMixture
 
 ################################################################################
 
@@ -840,14 +840,14 @@ def gaussian_mixture(X, k=100):
             - sig : covariance matricex of each components
     """
     # compute the GMM using scikit learn
-    g = GMM(n_components=k, covariance_type='diag')
+    g = GaussianMixture(n_components=k, covariance_type='diag')
     g.fit(X)
     logging.info("GMM trained")
 
     # retrieve results
     w = g.weights_
     mu = g.means_
-    sig = g.covars_
+    sig = g.covariances_
 
     return w, mu, sig
 
