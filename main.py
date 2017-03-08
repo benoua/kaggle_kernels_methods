@@ -86,6 +86,9 @@ def cross_validation(feats, kernels, C_array, n, display = True):
 ################################################################################
 
 if __name__ == "__main__":
+    # initialize logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
     # load the data
     Xtr, Ytr, Xte = load_data(5000)
 
@@ -94,18 +97,21 @@ if __name__ == "__main__":
     patch_width = 4
     dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
     hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    logging.info("Train patch histograms generated")
 
     # build the HOG hist
     n_voc = 50
     n_bins = 9
     dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
     hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+    logging.info("Train HOG histograms generated")
 
     # build the patch GMM
     n_mixt = 50
     patch_width = 4
     w, mu, sig = patch_gmm(Xtr, n_mixt, patch_width)
     fisher_patch = patch_fisher(Xtr, w, mu, sig, patch_width)
+    logging.info("Train patch gmm generated")
 
     # combine features
     feats_tr = np.hstack((hists_patch, hists_HOG, fisher_patch))
@@ -139,7 +145,9 @@ if __name__ == "__main__":
     feats_te = np.hstack((hists_patch_te, hists_HOG_te, fisher_patch_te))
     K_te = Gram(feats_te, feats_tr, kernel=kernel[0], degree=kernel[1],
         gamma=kernel[2])
+    logging.info("Test features generated")
     predictors = SVM_ova_predictors(K_tr, Ytr, C)
     Yte = SVM_ova_predict(K_te, predictors)
     save_submit(Yte)
+    logging.info("Done")
 
