@@ -254,7 +254,8 @@ def patch_dictionnary(X, n_voc, patch_width, show_distrib=False):
         plt.clf()
         fig, ax1 = plt.subplots()
         ax1.set_xlabel("word number")
-        ax1.set_title("patch dictionnary: %d words for %d images"%(n_voc,X.shape[0]))
+        ax1.set_title("patch dictionnary: %d words for %d images"%
+            (n_voc,X.shape[0]))
         ax1.hist(temp, bins=n_voc, normed=True, color='b')
         ax1.set_ylabel('individual probability', color='b')
         ax1.tick_params('y', colors='b')
@@ -864,7 +865,7 @@ def gaussian_mixture(X, k=100):
 
 ################################################################################
 
-def gmm(x, k, n_init=1):
+def gmm(x, k, n_init=1, tol = 1e-6, max_iter = 100):
     """
         Gaussian mixture implementation
 
@@ -872,6 +873,8 @@ def gmm(x, k, n_init=1):
             - X : data input stored in row vectors
             - k : number of components for GMM
             - n_init : number of initializations for kmeans
+            - tol : max precision before stoping algo
+            - max_iter : number max of EM iterations
 
         Returns:
             - w : weights of each mixture components
@@ -907,7 +910,8 @@ def gmm(x, k, n_init=1):
     # Loop
     logging.info("---- EM steps looping ----")
     l = 0;
-    while np.sum(np.square(mu_old-mu))+np.sum(np.square(sigma_old-sigma))>1e-6:
+    while np.sum(np.square(mu_old-mu))+np.sum(np.square(sigma_old-sigma))>tol \
+     and l < max_iter:
         # Record old values
         mu_old = np.copy(mu)
         sigma_old = np.copy(sigma)
@@ -935,11 +939,9 @@ def gmm(x, k, n_init=1):
 
             # sigma
             for j in range(p) :
-                sum_ = 0
-                for s in range(n):
+                temp = np.sum( ((x[:,j] - mu[i, j])**2 ) * q[:,i], axis = 0)
 
-                    sum_ += (x[s,j] - mu[i,j])**2 * q[s,i]
-                sigma[i,j] = sum_ / pi[i]
+                sigma[i,j] = temp / pi[i]
 
         pi = pi/np.sum(pi)
 
@@ -1046,7 +1048,7 @@ def patch_gmm(X, n_mixt, patch_width):
     # build the dictionnary
     words = patch_list(X, patch_width)              # compute the words list
     # w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
-    w, mu, sig = gaussian_mixture(words, n_mixt)    # compute the gmm
+    w, mu, sig = gmm(words, n_mixt)    # compute the gmm
 
     return w, mu, sig
 
