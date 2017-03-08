@@ -149,7 +149,7 @@ def patch_list(X, patch_width):
 
 ################################################################################
 
-def kmeans(X, k, n_try):
+def kmeans(X, k, n_try, display = True):
     """
         Compute the k-mean representation of the input data X.
 
@@ -192,7 +192,8 @@ def kmeans(X, k, n_try):
 
             # display progress
             label_change = np.sum(old_labels != labels)
-            logging.info("Kmeans: iter %d-%d, change: %d, error: %0.4f" %
+            if display:
+                logging.info("Kmeans: iter %d-%d, change: %d, error: %0.4f" %
                 (l+1, j+1, label_change, err_tot))
             label_change = label_change > X.shape[0]*5./100
             j += 1
@@ -215,7 +216,7 @@ def kmeans(X, k, n_try):
                 best_centroids = np.copy(centroids)
                 best_err = err_tot
 
-    logging.info("Kmeans converged.")
+    if display: logging.info("Kmeans converged.")
 
     return best_centroids, labels
 
@@ -235,8 +236,8 @@ def patch_dictionnary(X, n_voc, patch_width, show_distrib=False):
             - dic : dictionnary of all words
     """
     # build the dictionnary
-    words = patch_list(X, patch_width)          # compute the words list
-    dic, labels = kmeans(words, n_voc, 3)       # compute the dictionnary
+    words = patch_list(X, patch_width)              # compute the words list
+    dic, labels = kmeans(words, n_voc, 3, False)    # compute the dictionnary
 
     # display histogram
     if show_distrib:
@@ -756,8 +757,8 @@ def HOG_dictionnary(X, n_voc, n_bins, show_distrib=False):
             - dic : dictionnary of all words
     """
     # build the dictionnary
-    words = HOG_list(X, n_bins)                 # compute the words list
-    dic, labels = kmeans(words, n_voc, 3)       # compute the dictionnary
+    words = HOG_list(X, n_bins)                     # compute the words list
+    dic, labels = kmeans(words, n_voc, 3, False)    # compute the dictionnary
 
     # display histogram
     if show_distrib:
@@ -878,7 +879,7 @@ def gmm(x, k, n_init=1):
 
     # Initialize the variable for the EM algirithm using k-means
     logging.info("---- K-mean initialisation ----")
-    centroids, labels = kmeans(x, k, n_init)
+    centroids, labels = kmeans(x, k, n_init, False)
 
     q = np.zeros((n,k))
     mu = np.zeros((k,p))
@@ -1129,11 +1130,11 @@ if __name__ == "__main__":
     # load the data
     Xtr, Ytr, Xte = load_data(1000)
 
-    # build the patch hist
-    n_voc = 200
-    patch_width = 4
-    dic_patch = patch_dictionnary(Xtr, n_voc, patch_width, True)
-    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    # # build the patch hist
+    # n_voc = 200
+    # patch_width = 4
+    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width, True)
+    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
 
     # # build the HOG hist
     # n_voc = 200
@@ -1141,11 +1142,11 @@ if __name__ == "__main__":
     # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins, True)
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
-    # # build the patch GMM
-    # n_mixt = 200
-    # patch_width = 4
-    # w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
-    # fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
+    # build the patch GMM
+    n_mixt = 200
+    patch_width = 4
+    w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
+    fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
 
     # combine features
     # feats = np.hstack((hists_patch, hists_HOG))
@@ -1165,16 +1166,26 @@ if __name__ == "__main__":
     K9 = Gram(feats, kernel = 'rbf', gamma = 1)
     K10 = Gram(feats, kernel = 'rbf', gamma = 1.5)
     K11 = Gram(feats, kernel = 'rbf', gamma = 2)
-    K12 = Gram(feats, kernel = 'rbf', gamma = 2.5)
+    K12 = Gram(feats, kernel = 'rbf', gamma = 3)
+    K13 = Gram(feats, kernel = 'rbf', gamma = 3.5)
+    K14 = Gram(feats, kernel = 'rbf', gamma = 5)
+    K15 = Gram(feats, kernel = 'rbf', gamma = 10)
+    K16 = Gram(feats, kernel = 'rbf', gamma = 20)
 
     # cross validation
     n = 10
     C_array = 0.01*1.5**np.arange(0,30)
-    i = 0
     print("K\terror\tC")
-    for K in [K1,K2,K3,K4,K5,K6,K7,K8,K9,K10,K11]:
-        best_C, best_err = cross_validation(K, n, C_array, False)
-        print("K%d\t%0.1f\t%0.2f"%(i,best_err,best_C))
+    k = 0
+    best_K = None
+    for K in [K1,K2,K3,K4,K5,K6,K7,K8,K9,K10,K11,K12,K13,K14,K15,K16]:
+        C, err = cross_validation(K, n, C_array, False)
+        print("K%d\t%0.1f\t%0.2f"%(k,best_err,best_C))
+        if best_K is None or err < best_err:
+            best_K = k
+            best_err = err
+        k += 1
+    print("Best K:%d"%best_K)
 
     # # final prediction
     # C = best_C
@@ -1185,4 +1196,5 @@ if __name__ == "__main__":
     # Yte = SVM_ova_predict(hists_te, predictors)
     # save_submit(Yte)
 
+    pdb.set_trace()
 
