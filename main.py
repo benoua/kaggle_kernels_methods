@@ -361,7 +361,7 @@ def Gram(hists, kernel = 'linear', degree = 3, gamma = None):
 
 ################################################################################
 
-def SVM_kernel(K, Y, C, hists):
+def SVM_kernel(K, Y, C, feats):
     """
         Solve the quadratic problem with dual formulation using the kernel Gram
         matrix.
@@ -375,7 +375,7 @@ def SVM_kernel(K, Y, C, hists):
             - K : kernel Gram matrix
             - Y : data labels
             - C : regularisation parameter for the SVM soft margin
-            - hists : list of histograms of all images
+            - feats : feature list
 
         Returns:
             - w : vector in feature space
@@ -410,6 +410,9 @@ def SVM_kernel(K, Y, C, hists):
 
     # hide outputs
     cvxopt.solvers.options['show_progress'] = False
+    cvxopt.solvers.options['reltol'] = 1e-12
+    cvxopt.solvers.options['feastol'] = 1e-12
+    cvxopt.solvers.options['abstol'] = 1e-12
 
     # solve
     solution = cvxopt.solvers.qp(P_qp, q_qp, G_qp, h_qp, A_qp, b_qp)
@@ -418,15 +421,22 @@ def SVM_kernel(K, Y, C, hists):
     alpha = np.array(solution['x']).flatten()
 
     # compute the intercept
-    svp = np.where((alpha<(0.99*C))*(alpha>(0.01*C)))[0]
-    svn = np.where((alpha>(-0.99*C))*(alpha<(-0.01*C)))[0]
+    svp = np.where((alpha<((1-1e-4)*C))*(alpha>(C*1e-4)))[0]
+    svn = np.where((alpha>(-(1-1e-4)*C))*(alpha<(-C*1e-4)))[0]
     rhop = 1 - K.dot(alpha)[svp].mean() if svp.size > 0 else np.nan
     rhon = - 1 - K.dot(alpha)[svn].mean() if svn.size > 0 else np.nan
     rho = np.array([rhop, rhon])
     rho = rho[np.isfinite(rho)].mean()
 
     # compute the representation
-    w = alpha.reshape(1,n).dot(hists).flatten()
+    w = alpha.reshape(1,n).dot(feats).flatten()
+
+
+    pdb.set_trace()
+
+    clf = svm.SVC(kernel='precomputed', C=C, shrinking=False, tol=1e-6)
+    clf.fit(K, Y)
+    clf.predict(K)
 
     return w, rho
 
@@ -479,14 +489,14 @@ def SVM_ovo_predictors(K, Y, C, hists):
 
 ################################################################################
 
-def SVM_ova_predictors(K, Y, C, hists):
+def SVM_ova_predictors(K, Y, C, feats):
     """
         Implement the one versus all strategy for multiclass SVM.
 
         Arguments:
             - K : kernel Gram matrix
             - Y : data labels
-            - C : regularisation parameter for the SVM soft margin
+            - C featsregularisation parameter for the SVM soft margin
             - hists : list of histograms of all images
 
         Returns:
@@ -497,7 +507,7 @@ def SVM_ova_predictors(K, Y, C, hists):
     N = Y_unique.shape[0]
 
     # go through all labels
-    predictors = np.zeros((N, hists.shape[1] + 1))
+    predictors = np.zeros((N, feats.shape[1] + 1))
     for i in range(0, Y_unique.shape[0]):
         # select only the required data
         Y_i = np.copy(Y)
@@ -506,7 +516,7 @@ def SVM_ova_predictors(K, Y, C, hists):
 
         # compute the corresponding SVM
         logging.info("Training SVM ova for label %d"%Y_unique[i])
-        w, rho = SVM_kernel(K, Y_i, C, hists)
+        w, rho = SVM_kernel(K, Y_i, C, feats)
 
         # store the values
         predictors[i,0:-1] = w.flatten()
@@ -567,12 +577,12 @@ def SVM_ovo_predict(hists, predictors):
 
 ################################################################################
 
-def SVM_ova_predict(hists, predictors):
+def SVM_ova_predict(feats, predictors):
     """
         Predict the label using a predictor
 
         Arguments:
-            - hists : histogram of the data to predict
+            - feats : histogram of the data to predict
             - predictors : predictor of each SVM
 
         Returns:
@@ -580,13 +590,13 @@ def SVM_ova_predict(hists, predictors):
     """
     # retrieve dimensions
     N = predictors.shape[0]
-    n = hists.shape[0]
+    n = feats.shape[0]
 
     # loop through all images
     Ypred = np.zeros(n)
     for l in range(0,n):
         # initialize variables
-        hist = hists[l,:]
+        feat = feats[l,:]
         votes = np.zeros(N)
 
         # loop through all pairs
@@ -596,7 +606,8 @@ def SVM_ova_predict(hists, predictors):
             rho = predictors[i,-1]
 
             # update vote
-            score = w.dot(hist) + rho
+            score = w.dot(feat) + rho
+            print(score)
             votes[i] = score
 
         Ypred[l] = votes.argmax()
@@ -1108,7 +1119,7 @@ def cross_validation(K, n, C_array, display = True):
             K_CV_tr = K_CV_tr[:,perm_tr]
 
             # train scikit SVM
-            clf = svm.SVC(kernel='precomputed', C=C)
+            clf = svm.SVC(kernel='precomputed', C=C, shrinking=False, tol=1e-6)
             clf.fit(K_CV_tr, Y_CV_tr)
             K_CV_te = K[perm_te,:]
             K_CV_te = K_CV_te[:,perm_tr]
@@ -1128,30 +1139,31 @@ def cross_validation(K, n, C_array, display = True):
 
 if __name__ == "__main__":
     # load the data
-    Xtr, Ytr, Xte = load_data(1000)
+    Xtr, Ytr, Xte = load_data(500)
 
     # build the patch hist
-    n_voc = 200
+    n_voc = 50
     patch_width = 4
     dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
     hists_patch = patch_hists(Xtr, dic_patch, patch_width)
 
-    # # build the HOG hist
-    # n_voc = 200
-    # n_bins = 9
-    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
-    # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
+    # build the HOG hist
+    n_voc = 50
+    n_bins = 9
+    dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
+    hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
-    # # build the patch GMM
-    # n_mixt = 200
-    # patch_width = 4
-    # w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
-    # fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
+    # build the patch GMM
+    n_mixt = 50
+    patch_width = 4
+    w, mu, sig = patch_gmm(Xtr, n_mixt, patch_width)
+    fisher_patch = patch_fisher(Xtr, w, mu, sig, patch_width)
 
     # combine features
-    # feats = np.hstack((hists_patch, hists_HOG))
-    feats = hists_patch
+    # feats = hists_patch
+    # feats = hists_HOG
     # feats = fisher_patch
+    feats = np.hstack((hists_patch, hists_HOG, fisher_patch))
 
     # generate the Gram matrix
     # K = feats.dot(feats.T)
@@ -1172,29 +1184,35 @@ if __name__ == "__main__":
     K15 = Gram(feats, kernel = 'rbf', gamma = 10)
     K16 = Gram(feats, kernel = 'rbf', gamma = 20)
 
-    # cross validation
-    n = 10
-    C_array = 0.01*1.5**np.arange(0,30)
-    print("K\terror\tC")
-    k = 0
-    best_K = None
-    for K in [K1,K2,K3,K4,K5,K6,K7,K8,K9,K10,K11,K12,K13,K14,K15,K16]:
-        C, err = cross_validation(K, n, C_array, False)
-        print("K%d\t%0.1f\t%0.2f"%(k,err,C))
-        if best_K is None or err < best_err:
-            best_K = k
-            best_err = err
-        k += 1
-    print("Best K: %d\terr: %0.1f"%(best_K,best_err))
+    # # cross validation
+    # n = 10
+    # C_array = 0.01*1.5**np.arange(0,30)
+    # print("K\terror\tC")
+    # k = 0
+    # best_k = None
+    # for K in [K1,K2,K3,K4,K5,K6,K7,K8,K9,K10,K11,K12,K13,K14,K15,K16]:
+    #     C, err = cross_validation(K, n, C_array, False)
+    #     print("K%d\t%0.1f\t%0.2f"%(k,err,C))
+    #     if best_k is None or err < best_err:
+    #         best_k = k
+    #         best_K = K
+    #         best_C = C
+    #         best_err = err
+    #     k += 1
+    # print("- - - - Best - - - -")
+    # print("K%d\t%0.1f\t%0.2f"%(best_k,best_err,best_C))
 
-    # # final prediction
-    # C = best_C
-    # predictors = SVM_ova_predictors(K, Ytr, C, feats)
-    # hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
-    # hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
-    # hists_te = np.hstack((hists_patch_te, hists_HOG_te))
-    # Yte = SVM_ova_predict(hists_te, predictors)
-    # save_submit(Yte)
+    best_K = K5
+    best_C = 2.92
+
+    # final prediction
+    predictors = SVM_ova_predictors(best_K, Ytr, best_C, feats)
+    hists_patch_te = patch_hists(Xte, dic_patch, patch_width)
+    hists_HOG_te = HOG_hists(Xte, dic_HOG, n_bins)
+    fisher_patch_te = patch_fisher(Xte, w, mu, sig, patch_width)
+    feats_te = np.hstack((hists_patch_te, hists_HOG_te, fisher_patch_te))
+    Yte = SVM_ova_predict(feats_te, predictors)
+    save_submit(Yte)
 
     pdb.set_trace()
 
