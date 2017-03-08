@@ -1130,28 +1130,28 @@ if __name__ == "__main__":
     # load the data
     Xtr, Ytr, Xte = load_data(1000)
 
-    # # build the patch hist
-    # n_voc = 200
-    # patch_width = 4
-    # dic_patch = patch_dictionnary(Xtr, n_voc, patch_width, True)
-    # hists_patch = patch_hists(Xtr, dic_patch, patch_width)
+    # build the patch hist
+    n_voc = 200
+    patch_width = 4
+    dic_patch = patch_dictionnary(Xtr, n_voc, patch_width)
+    hists_patch = patch_hists(Xtr, dic_patch, patch_width)
 
     # # build the HOG hist
     # n_voc = 200
     # n_bins = 9
-    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins, True)
+    # dic_HOG = HOG_dictionnary(Xtr, n_voc, n_bins)
     # hists_HOG = HOG_hists(Xtr, dic_HOG, n_bins)
 
-    # build the patch GMM
-    n_mixt = 200
-    patch_width = 4
-    w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
-    fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
+    # # build the patch GMM
+    # n_mixt = 200
+    # patch_width = 4
+    # w_patch, mu_patch, sig_patch = patch_gmm(Xtr, n_mixt, patch_width)
+    # fisher_patch = patch_fisher(Xtr, w_patch, mu_patch, sig_patch, patch_width)
 
     # combine features
     # feats = np.hstack((hists_patch, hists_HOG))
-    # feats = hists_patch
-    feats = fisher_patch
+    feats = hists_patch
+    # feats = fisher_patch
 
     # generate the Gram matrix
     # K = feats.dot(feats.T)
@@ -1180,12 +1180,12 @@ if __name__ == "__main__":
     best_K = None
     for K in [K1,K2,K3,K4,K5,K6,K7,K8,K9,K10,K11,K12,K13,K14,K15,K16]:
         C, err = cross_validation(K, n, C_array, False)
-        print("K%d\t%0.1f\t%0.2f"%(k,best_err,best_C))
+        print("K%d\t%0.1f\t%0.2f"%(k,err,C))
         if best_K is None or err < best_err:
             best_K = k
             best_err = err
         k += 1
-    print("Best K:%d"%best_K)
+    print("Best K: %d\terr: %0.1f"%(best_K,best_err))
 
     # # final prediction
     # C = best_C
