@@ -216,14 +216,14 @@ def patch_fisher(X, w, mu, sig, patch_width):
     k = w.shape[0]
     p = patch_width**2
 
-    # fisher = np.zeros((n, 2 * k * p))
-    temp = np.zeros((n,k))
+    fisher = np.zeros((n, 2 * k * p))
+    # temp = np.zeros((n,k))
     for i in range(0, n):
         # retrieve the first histogram
         im = build_image(X[i,:])
         feat = patch_features(im, patch_width)
         gamma = compute_gamma(feat, w, mu, sig).sum(axis=0)/n
-        temp[i,:] = np.sqrt(gamma / gamma.sum())
-        # fisher[i,:] = compute_statistics_single(feat, w, mu, sig)
-    # return fisher
-    return temp
+        # temp[i,:] = np.sqrt(gamma / gamma.sum())
+        fisher[i,:] = compute_statistics_single(feat, w, mu, sig)
+    return fisher
+    # return temp
